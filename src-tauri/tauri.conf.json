@@ -1,0 +1,22 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Olukotan",
+  "version": "0.1.0",
+  "identifier": "studio.olukotan.desktop",
+  "build": {
+    "beforeDevCommand": "npm.cmd run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm.cmd run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [{ "title": "Olukotan", "width": 1440, "height": 920, "minWidth": 980, "minHeight": 680, "resizable": true }],
+    "security": { "csp": null }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "msi"],
+    "shortDescription": "Local-first writing studio",
+    "longDescription": "Olukotan helps writers create, organise and protect their work while keeping direct ownership of their files."
+  }
+}
