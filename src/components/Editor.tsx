@@ -138,7 +138,8 @@ export function Editor({ project, content, dirty, saving, message, onChange, onP
       setSuggestionIndex((current) => event.key === "ArrowDown" ? (current + 1) % suggestions.length : (current <= 0 ? suggestions.length - 1 : current - 1));
       return;
     }
-    if ((event.key === "Enter" || event.key === "Tab") && suggestions.length && (suggestionIndex >= 0 || area.value.trim())) {
+    const explicitlyAcceptingSuggestion = suggestionIndex >= 0 || (event.key === "Tab" && Boolean(area.value.trim()));
+    if ((event.key === "Enter" || event.key === "Tab") && suggestions.length && explicitlyAcceptingSuggestion) {
       event.preventDefault(); chooseSuggestion(suggestions[suggestionIndex >= 0 ? suggestionIndex : 0]); return;
     }
     if (event.key === "Enter") {

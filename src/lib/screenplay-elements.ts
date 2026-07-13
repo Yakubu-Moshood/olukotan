@@ -149,15 +149,13 @@ export function collectSceneLocations(elements: ScreenplayElement[]): string[] {
   return [...new Set(elements.filter((element) => element.type === "scene-heading").map((element) => element.text.replace(SCENE_PATTERN, "").split(/\s+-\s+/u)[0]?.trim()).filter(Boolean))];
 }
 
-export function updateElementText(elements: ScreenplayElement[], index: number, rawText: string, explicitCharacter = false): EditResult {
-  const knownCharacters = collectKnownCharacters(elements);
+export function updateElementText(elements: ScreenplayElement[], index: number, rawText: string, _explicitCharacter = false): EditResult {
   const current = elements[index];
   let type = current.type;
-  if (type === "action") {
-    const detected = detectElementType(rawText, { knownCharacters, afterAction: true, explicitCharacter });
-    const knownName = knownCharacters.includes(parseCharacter(rawText).name);
-    type = detected === "character" && !knownName && !explicitCharacter ? "action" : detected;
-  } else if (type === "dialogue" && rawText.trimStart().startsWith("(")) type = "parenthetical";
+  // Typing edits text only. Action-to-Character (or any other structural
+  // transition) belongs to an explicit commit event such as Enter, Tab,
+  // autocomplete acceptance, a shortcut, or the element selector.
+  if (type === "dialogue" && rawText.trimStart().startsWith("(")) type = "parenthetical";
   const text = normalizeElementText(type, rawText);
   const metadata = type === "character" ? (() => { const value = parseCharacter(text); return { ...current.metadata, characterName: value.name, characterExtension: value.extension }; })() : current.metadata;
   const next = elements.map((element, position) => position === index ? { ...element, type, text, metadata } : element);
@@ -167,7 +165,9 @@ export function updateElementText(elements: ScreenplayElement[], index: number, 
 export function applyEnter(elements: ScreenplayElement[], index: number, cursorPosition: number): EditResult {
   const current = elements[index];
   const knownCharacters = collectKnownCharacters(elements);
-  if (current.type === "action" && current.text && isLikelyCharacter(current.text, knownCharacters, false)) {
+  const characterName = parseCharacter(current.text).name;
+  const exactStandaloneKnownCharacter = current.text.trim().toLocaleUpperCase("en-GB") === characterName && knownCharacters.includes(characterName);
+  if (current.type === "action" && exactStandaloneKnownCharacter) {
     const character = { ...current, type: "character" as const, text: normalizeElementText("character", current.text), metadata: { ...current.metadata, characterName: parseCharacter(current.text).name, characterExtension: parseCharacter(current.text).extension } };
     const dialogue = createElement("dialogue");
     const next = [...elements]; next.splice(index, 1, character, dialogue);

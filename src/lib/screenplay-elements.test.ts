@@ -114,6 +114,39 @@ describe("required keyboard writing flows", () => {
   });
 });
 
+describe("Action typing and character commit points", () => {
+  it("keeps every partial known-character match as Action while typing", () => {
+    let elements = [createElement("character", "DEJI"), createElement("dialogue", "I am leaving."), createElement("action")];
+    for (const text of ["D", "De", "Dej", "Deji"]) {
+      elements = updateElementText(elements, 2, text).elements;
+      expect(elements[2]).toMatchObject({ type: "action", text });
+    }
+  });
+
+  it("keeps a complete sentence beginning with the previous speaker as Action", () => {
+    let elements = [createElement("character", "DEJI"), createElement("dialogue", "I am leaving."), createElement("action")];
+    for (const text of ["Deji", "Deji ", "Deji walks", "Deji walks away."]) {
+      elements = updateElementText(elements, 2, text).elements;
+      expect(elements[2]).toMatchObject({ type: "action", text });
+    }
+  });
+
+  it("converts an exact known name only when Enter commits the Action line", () => {
+    const elements = [createElement("character", "DEJI"), createElement("dialogue", "I am leaving."), createElement("action", "Deji")];
+    expect(elements[2].type).toBe("action");
+    const committed = applyEnter(elements, 2, elements[2].text.length);
+    expect(committed.elements[2]).toMatchObject({ type: "character", text: "DEJI" });
+    expect(committed.elements[3].type).toBe("dialogue");
+  });
+
+  it("does not infer an unknown uppercase Action as a character cue on Enter", () => {
+    const elements = [createElement("action", "A STRANGE SIGN")];
+    const committed = applyEnter(elements, 0, elements[0].text.length);
+    expect(committed.elements[0]).toMatchObject({ type: "action", text: "A STRANGE SIGN" });
+    expect(committed.elements[1].type).toBe("action");
+  });
+});
+
 describe("structured Fountain round trip", () => {
   it("preserves element types and text across save and reopen", () => {
     const original = {

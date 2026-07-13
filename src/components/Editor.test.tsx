@@ -106,4 +106,53 @@ describe("structured screenplay editor integration", () => {
     expect(screen.queryByLabelText("Action element 2")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Scene Heading element 1")).toHaveValue("EXT. ROAD - NIGHT");
   });
+
+  it("never converts the previous speaker into Character during Action typing", () => {
+    setup();
+    const scene = screen.getByLabelText("Scene Heading element 1") as HTMLTextAreaElement;
+    fireEvent.change(scene, { target: { value: "INT. ROOM - DAY", selectionStart: 15 } });
+    fireEvent.keyDown(scene, { key: "Enter" });
+    fireEvent.keyDown(screen.getByLabelText("Action element 2"), { key: "Tab" });
+    const character = screen.getByLabelText("Character element 2") as HTMLTextAreaElement;
+    fireEvent.change(character, { target: { value: "deji", selectionStart: 4 } });
+    fireEvent.keyDown(character, { key: "Enter" });
+    const dialogue = screen.getByLabelText("Dialogue element 3") as HTMLTextAreaElement;
+    fireEvent.change(dialogue, { target: { value: "Ayomide, how far?", selectionStart: 17 } });
+    fireEvent.keyDown(dialogue, { key: "Enter" });
+
+    const stages = ["D", "De", "Dej", "Deji", "Deji ", "Deji i", "Deji ig", "Deji ign", "Deji ignores", "Deji ignores the call."];
+    for (const value of stages) {
+      const action = screen.getByLabelText("Action element 4") as HTMLTextAreaElement;
+      fireEvent.change(action, { target: { value, selectionStart: value.length } });
+      expect(screen.getByLabelText("Action element 4")).toHaveValue(value);
+      expect((screen.getByLabelText("Action element 4") as HTMLTextAreaElement).selectionStart).toBe(value.length);
+      expect(screen.queryByLabelText("Character element 4")).not.toBeInTheDocument();
+    }
+
+    const committedAction = screen.getByLabelText("Action element 4") as HTMLTextAreaElement;
+    fireEvent.keyDown(committedAction, { key: "Enter" });
+    const standalone = screen.getByLabelText("Action element 5") as HTMLTextAreaElement;
+    fireEvent.change(standalone, { target: { value: "Deji", selectionStart: 4 } });
+    expect(screen.getByLabelText("Action element 5")).toHaveValue("Deji");
+    fireEvent.keyDown(screen.getByLabelText("Action element 5"), { key: "Enter" });
+    expect(screen.getByLabelText("Character element 5")).toHaveValue("DEJI");
+    expect(screen.getByLabelText("Dialogue element 6")).toBeInTheDocument();
+  });
+
+  it("converts an Action only after a character autocomplete is explicitly clicked", () => {
+    setup();
+    const scene = screen.getByLabelText("Scene Heading element 1") as HTMLTextAreaElement;
+    fireEvent.change(scene, { target: { value: "INT. ROOM - DAY", selectionStart: 15 } }); fireEvent.keyDown(scene, { key: "Enter" });
+    fireEvent.keyDown(screen.getByLabelText("Action element 2"), { key: "Tab" });
+    const character = screen.getByLabelText("Character element 2") as HTMLTextAreaElement;
+    fireEvent.change(character, { target: { value: "deji", selectionStart: 4 } }); fireEvent.keyDown(character, { key: "Enter" });
+    fireEvent.change(screen.getByLabelText("Dialogue element 3"), { target: { value: "No.", selectionStart: 3 } });
+    fireEvent.keyDown(screen.getByLabelText("Dialogue element 3"), { key: "Enter" });
+    const action = screen.getByLabelText("Action element 4") as HTMLTextAreaElement;
+    fireEvent.change(action, { target: { value: "De", selectionStart: 2 } });
+    expect(screen.getByLabelText("Action element 4")).toHaveValue("De");
+    expect(screen.getByRole("option", { name: "DEJI" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("option", { name: "DEJI" }));
+    expect(screen.getByLabelText("Character element 4")).toHaveValue("DEJI");
+  });
 });
