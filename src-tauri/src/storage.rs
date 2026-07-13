@@ -5,6 +5,23 @@ use uuid::Uuid;
 
 const MANIFEST: &str = "olukotan-project.json";
 const SCREENPLAY: &str = "screenplay.fountain";
+const PROJECT_DATA: &str = "screenplay-data.json";
+
+fn default_project_data() -> serde_json::Value {
+    serde_json::json!({
+        "schemaVersion": 1,
+        "screenplaySettings": {
+            "preset": "spec-script",
+            "sceneNumbers": { "enabled": false, "mode": "automatic", "position": "both", "showInEditor": true, "showInExport": true, "showInPrint": true },
+            "pageNumbers": { "enabled": true, "position": "top-right", "startOnPage": 2, "customStartPage": 1, "firstVisibleNumber": 1 },
+            "continueds": { "character": "automatic", "dialogueMore": true, "dialogueContinued": true, "sceneContinued": "off" },
+            "capitalisation": { "sceneHeadings": true, "characters": true, "transitions": true, "shots": true },
+            "revisions": { "enabled": false, "activeSetId": null, "showMarks": true },
+            "pagination": { "pageSize": "A4", "viewMode": "page" }
+        },
+        "scenes": []
+    })
+}
 
 pub fn storage_mode(path: &Path) -> String {
     let value = path.to_string_lossy().to_lowercase();
@@ -72,6 +89,7 @@ pub fn create(parent: &Path, title: String, project_type: String, author: String
         let screenplay = format!("Title: {}\nAuthor: {}\nDraft date: {}\n\n", manifest.title, manifest.author, Utc::now().format("%e %B %Y"));
         atomic_write(&root.join(MANIFEST), serde_json::to_string_pretty(&manifest)?.as_bytes())?;
         atomic_write(&root.join(SCREENPLAY), screenplay.as_bytes())?;
+        atomic_write(&root.join(PROJECT_DATA), serde_json::to_string_pretty(&default_project_data())?.as_bytes())?;
         for (name, heading) in [("treatment.md", "Treatment"), ("synopsis.md", "Synopsis"), ("notes.md", "Notes")] {
             atomic_write(&root.join(name), format!("# {}\n\n", heading).as_bytes())?;
         }
@@ -90,6 +108,14 @@ pub fn open(root: &Path) -> AppResult<ProjectPayload> {
     let script_path = root.join(&manifest.primary_document);
     if !script_path.is_file() { return Err(AppError::Validation("The primary screenplay file is missing. Check the recovery and versions folders before creating a replacement.".into())); }
     let screenplay = fs::read_to_string(&script_path)?;
+    let data_path = root.join(PROJECT_DATA);
+    let project_data = if data_path.is_file() {
+        serde_json::from_str(&fs::read_to_string(&data_path)?)?
+    } else {
+        let value = default_project_data();
+        atomic_write(&data_path, serde_json::to_string_pretty(&value)?.as_bytes())?;
+        value
+    };
     for (name, default) in [("treatment.md", "# Treatment\n\n"), ("synopsis.md", "# Synopsis\n\n"), ("notes.md", "# Notes\n\n"), ("characters.json", "[]\n"), ("locations.json", "[]\n"), ("structure.json", "[]\n"), ("decisions.json", "[]\n")] {
         let path = root.join(name); if !path.exists() { let _ = atomic_write(&path, default.as_bytes()); }
     }
@@ -101,16 +127,17 @@ pub fn open(root: &Path) -> AppResult<ProjectPayload> {
         if content != screenplay { Some(RecoveryPayload { content, modified_at: modified_millis(&recovery_path)? }) } else { None }
     } else { None };
     let read_only = fs::OpenOptions::new().append(true).open(&script_path).is_err();
-    Ok(ProjectPayload { manifest, screenplay, project_path: root.to_string_lossy().to_string(), read_only, modified_at, recovery })
+    Ok(ProjectPayload { manifest, screenplay, project_path: root.to_string_lossy().to_string(), read_only, modified_at, recovery, project_data })
 }
 
-pub fn save(root: &Path, content: &str, expected_modified_at: u64) -> AppResult<u64> {
+pub fn save(root: &Path, content: &str, expected_modified_at: u64, project_data: &serde_json::Value) -> AppResult<u64> {
     let path = root.join(SCREENPLAY);
     let actual = modified_millis(&path)?;
     if expected_modified_at > 0 && actual != expected_modified_at {
         return Err(AppError::Validation("The screenplay changed outside Olukotan. Saving stopped so neither version is overwritten. Reopen the project to compare the files.".into()));
     }
     atomic_write(&path, content.as_bytes())?;
+    atomic_write(&root.join(PROJECT_DATA), serde_json::to_string_pretty(project_data)?.as_bytes())?;
     let recovery = root.join("recovery").join("unsaved.fountain");
     if recovery.exists() { let _ = fs::remove_file(recovery); }
     let mut manifest: ProjectManifest = serde_json::from_str(&fs::read_to_string(root.join(MANIFEST))?)?;

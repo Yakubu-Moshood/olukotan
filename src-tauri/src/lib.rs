@@ -31,8 +31,8 @@ fn open_project(db: State<'_, AppState>, project_path: String) -> AppResult<Proj
 }
 
 #[tauri::command]
-fn save_screenplay(project_path: String, content: String, expected_modified_at: u64) -> AppResult<u64> {
-    storage::save(&storage::path(project_path), &content, expected_modified_at)
+fn save_screenplay(project_path: String, content: String, expected_modified_at: u64, project_data: serde_json::Value) -> AppResult<u64> {
+    storage::save(&storage::path(project_path), &content, expected_modified_at, &project_data)
 }
 
 #[tauri::command]

@@ -1,4 +1,4 @@
-import type { AppSettings, CreateProjectInput, ProjectPayload, RecentProject } from "./types";
+import type { AppSettings, CreateProjectInput, ProjectData, ProjectPayload, RecentProject } from "./types";
 import { webStore } from "./web-store";
 
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -8,7 +8,7 @@ export interface OlukotanPlatform {
   chooseFolder(title: string): Promise<string | null>;
   createProject(input: CreateProjectInput): Promise<ProjectPayload>;
   openProject(path: string): Promise<ProjectPayload>;
-  save(path: string, content: string, expectedModifiedAt: number): Promise<number>;
+  save(path: string, content: string, expectedModifiedAt: number, projectData: ProjectData): Promise<number>;
   recover(path: string, content: string): Promise<void>;
   discardRecovery(path: string): Promise<void>;
   recents(): Promise<RecentProject[]>;
@@ -26,7 +26,7 @@ const webPlatform: OlukotanPlatform = {
   kind: "web",
   async chooseFolder() { return "This device"; },
   createProject: (input) => webStore.create(input), openProject: (path) => webStore.open(path),
-  save: (path, content) => webStore.save(path, content), recover: (path, content) => webStore.recovery(path, content),
+  save: (path, content, _expectedModifiedAt, projectData) => webStore.save(path, content, projectData), recover: (path, content) => webStore.recovery(path, content),
   async discardRecovery(path) { webStore.discardRecovery(path); }, recents: () => webStore.recents(),
   removeRecent: (id) => webStore.remove(id), pinRecent: (id, pinned) => webStore.pin(id, pinned),
   async settings() { return { ...defaults, ...(await webStore.settings()) }; }, saveSettings: (value) => webStore.saveSettings(value),
@@ -38,7 +38,7 @@ const desktopPlatform: OlukotanPlatform = {
   async chooseFolder(title) { const { open } = await import("@tauri-apps/plugin-dialog"); const result = await open({ directory: true, multiple: false, title }); return typeof result === "string" ? result : null; },
   async createProject(input) { const { invoke } = await import("@tauri-apps/api/core"); return invoke("create_project", { parentPath: input.parentPath, title: input.title, projectType: input.projectType, author: input.author }); },
   async openProject(projectPath) { const { invoke } = await import("@tauri-apps/api/core"); return invoke("open_project", { projectPath }); },
-  async save(projectPath, content, expectedModifiedAt) { const { invoke } = await import("@tauri-apps/api/core"); return invoke("save_screenplay", { projectPath, content, expectedModifiedAt }); },
+  async save(projectPath, content, expectedModifiedAt, projectData) { const { invoke } = await import("@tauri-apps/api/core"); return invoke("save_screenplay", { projectPath, content, expectedModifiedAt, projectData }); },
   async recover(projectPath, content) { const { invoke } = await import("@tauri-apps/api/core"); return invoke("write_recovery", { projectPath, content }); },
   async discardRecovery(projectPath) { const { invoke } = await import("@tauri-apps/api/core"); return invoke("discard_recovery", { projectPath }); },
   async recents() { const { invoke } = await import("@tauri-apps/api/core"); return invoke("recent_projects"); },
@@ -52,4 +52,3 @@ const desktopPlatform: OlukotanPlatform = {
 
 export const platform = isTauri ? desktopPlatform : webPlatform;
 export const desktop = platform;
-

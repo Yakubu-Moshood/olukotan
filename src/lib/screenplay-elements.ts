@@ -7,6 +7,7 @@ export interface ScreenplayElement {
   type: ScreenplayElementType;
   text: string;
   metadata?: {
+    sceneId?: string;
     sceneNumber?: string;
     characterName?: string;
     characterExtension?: string;
@@ -54,6 +55,7 @@ export const COMMON_SHOTS = ["CLOSE ON:", "ANGLE ON", "INSERT:", "POV:", "WIDE S
 const SCENE_PATTERN = /^(?:INT\.|EXT\.|INT\.\/EXT\.|EXT\.\/INT\.|I\/E\.|I\/E\.|EST\.)\s*/iu;
 const CHARACTER_PATTERN = /^([^()]{1,40}?)(?:\s+\(([^)]+)\))?$/u;
 const STRUCTURAL_MARKER = /^\/\*\s*OLUKOTAN:([a-z-]+)\s*\*\/$/i;
+const SCENE_ID_MARKER = /^\/\*\s*OLUKOTAN:SCENE-ID:([^*]+)\*\/$/i;
 
 function id() {
   return globalThis.crypto?.randomUUID?.() ?? `element-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -222,10 +224,13 @@ export function parseFountain(source: string): ScreenplayDocument {
   }
   const elements: ScreenplayElement[] = [];
   let marker: ScreenplayElementType | undefined;
+  let pendingSceneId: string | undefined;
   let expectingDialogue = false;
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i]; const line = raw.trim();
     if (!line) { expectingDialogue = false; continue; }
+    const sceneIdMarker = line.match(SCENE_ID_MARKER);
+    if (sceneIdMarker) { pendingSceneId = sceneIdMarker[1].trim(); continue; }
     const marked = line.match(STRUCTURAL_MARKER);
     if (marked) { marker = marked[1] as ScreenplayElementType; continue; }
     if (marker) { elements.push(elementFromLine(marker, line.replace(/^!/u, ""))); marker = undefined; expectingDialogue = false; continue; }
@@ -234,7 +239,11 @@ export function parseFountain(source: string): ScreenplayDocument {
     if (line.startsWith("#")) { elements.push(createElement("section", line.replace(/^#+\s*/u, ""))); continue; }
     if (line.startsWith("=")) { elements.push(createElement("synopsis", line.replace(/^=\s*/u, ""))); continue; }
     if (line.startsWith("!")) { elements.push(createElement("action", line.slice(1))); expectingDialogue = false; continue; }
-    if (isSceneHeading(line.replace(/^\./u, ""))) { elements.push(elementFromLine("scene-heading", line.replace(/^\./u, ""))); expectingDialogue = false; continue; }
+    if (isSceneHeading(line.replace(/^\./u, ""))) {
+      const scene = elementFromLine("scene-heading", line.replace(/^\./u, ""));
+      scene.metadata = { ...scene.metadata, sceneId: pendingSceneId }; pendingSceneId = undefined;
+      elements.push(scene); expectingDialogue = false; continue;
+    }
     if (line.startsWith(">") || isTransition(line)) { elements.push(createElement("transition", line.replace(/^>\s*/u, ""))); expectingDialogue = false; continue; }
     if (expectingDialogue) {
       if (/^\(.*\)$/u.test(line)) elements.push(createElement("parenthetical", line));
@@ -253,7 +262,7 @@ export function parseFountain(source: string): ScreenplayDocument {
 
 function fountainText(element: ScreenplayElement): string {
   switch (element.type) {
-    case "scene-heading": return normalizeElementText(element.type, element.text) + (element.metadata?.sceneNumber ? ` #${element.metadata.sceneNumber}#` : "");
+    case "scene-heading": return `${element.metadata?.sceneId ? `/* OLUKOTAN:SCENE-ID:${element.metadata.sceneId} */\n` : ""}${normalizeElementText(element.type, element.text)}${element.metadata?.sceneNumber ? ` #${element.metadata.sceneNumber}#` : ""}`;
     case "character": return normalizeElementText(element.type, element.text);
     case "parenthetical": return normalizeElementText(element.type, element.text);
     case "transition": return `>${normalizeElementText(element.type, element.text)}`;

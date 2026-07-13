@@ -35,6 +35,7 @@ pub struct ProjectPayload {
     pub read_only: bool,
     pub modified_at: u64,
     pub recovery: Option<RecoveryPayload>,
+    pub project_data: serde_json::Value,
 }
 
 #[derive(Debug, Serialize)]

@@ -5,7 +5,7 @@ import { Home } from "./components/Home";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { googleDrive } from "./google-drive";
 import { platform } from "./platform";
-import type { AppSettings, ProjectPayload, RecentProject } from "./types";
+import { migrateProjectData, type AppSettings, type ProjectData, type ProjectPayload, type RecentProject } from "./types";
 
 const defaultSettings: AppSettings = { defaultProjectFolder: "", defaultAuthor: "", theme: "system", autosaveSeconds: 5, googleClientId: "", driveSyncEnabled: false };
 function errorText(reason: unknown) { return reason instanceof Error ? reason.message : String(reason); }
@@ -24,6 +24,7 @@ export default function App() {
   const [driveBusy, setDriveBusy] = useState(false);
   const [driveMessage, setDriveMessage] = useState("");
   const contentRef = useRef(content); contentRef.current = content;
+  const projectDataRef = useRef<ProjectData>(migrateProjectData());
 
   const refresh = useCallback(async () => { try { setRecents(await platform.recents()); } catch { setRecents([]); } }, []);
   useEffect(() => { void refresh(); void platform.settings().then((value) => setSettings({ ...defaultSettings, ...value })).catch(() => undefined); }, [refresh]);
@@ -33,6 +34,7 @@ export default function App() {
     if (value.recovery && window.confirm("Olukotan found newer unsaved work. Restore it now?")) {
       value.screenplay = value.recovery.content; setDirty(true); setMessage("Recovered unsaved work — save to keep it");
     } else if (value.recovery) { void platform.discardRecovery(value.projectPath); }
+    value.projectData = migrateProjectData(value.projectData); projectDataRef.current = value.projectData;
     setProject(value); setContent(value.screenplay); setCreateOpen(false);
   };
 
@@ -70,8 +72,8 @@ export default function App() {
     if (!project || !dirty || project.readOnly) return;
     setSaving(true); setMessage("");
     try {
-      const modifiedAt = await platform.save(project.projectPath, contentRef.current, project.modifiedAt);
-      let savedProject: ProjectPayload = { ...project, screenplay: contentRef.current, modifiedAt, recovery: undefined,
+      const modifiedAt = await platform.save(project.projectPath, contentRef.current, project.modifiedAt, projectDataRef.current);
+      let savedProject: ProjectPayload = { ...project, screenplay: contentRef.current, projectData: projectDataRef.current, modifiedAt, recovery: undefined,
         manifest: { ...project.manifest, updatedAt: new Date(modifiedAt).toISOString() } };
       setProject(savedProject); setDirty(false); setMessage(platform.kind === "web" ? "Saved offline on this device" : "Saved locally");
       if (platform.kind === "web" && settings.driveSyncEnabled && googleDrive.connected) {
@@ -98,6 +100,7 @@ export default function App() {
 
   if (project) return <Editor project={project} content={content} dirty={dirty} saving={saving} message={message}
     onChange={(value) => { setContent(value); setDirty(true); setMessage(""); }} onSave={() => void save()}
+    onProjectDataChange={(value) => { projectDataRef.current = value; setProject((current) => current ? { ...current, projectData: value } : current); setDirty(true); setMessage(""); }}
     onHome={() => { if (!dirty || window.confirm("Leave the editor? Your recovery copy will remain available.")) { setProject(null); void refresh(); } }}
     onReveal={() => void platform.reveal(project.projectPath)} />;
 

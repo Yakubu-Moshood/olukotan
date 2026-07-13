@@ -1,5 +1,5 @@
 import { projectFolderName } from "./lib/screenplay";
-import type { ProjectManifest, ProjectPayload } from "./types";
+import { migrateProjectData, type ProjectManifest, type ProjectPayload } from "./types";
 
 declare global {
   interface Window {
@@ -90,7 +90,8 @@ export const googleDrive = {
     const manifest: ProjectManifest = { ...project.manifest, updatedAt: new Date().toISOString(), storageMode: "google-drive" };
     await uploadText(folder.id, "olukotan-project.json", "application/json", JSON.stringify(manifest, null, 2));
     await uploadText(folder.id, "screenplay.fountain", "text/plain", screenplay);
-    return { ...project, manifest, screenplay, modifiedAt: Date.parse(manifest.updatedAt), recovery: undefined } satisfies ProjectPayload;
+    await uploadText(folder.id, "screenplay-data.json", "application/json", JSON.stringify(migrateProjectData(project.projectData), null, 2));
+    return { ...project, manifest, screenplay, projectData: migrateProjectData(project.projectData), modifiedAt: Date.parse(manifest.updatedAt), recovery: undefined } satisfies ProjectPayload;
   },
   async pull(clientId: string): Promise<ProjectPayload[]> {
     await authorise(clientId); const root = await ensureRoot(false); if (!root) return [];
@@ -103,10 +104,11 @@ export const googleDrive = {
       try {
         const manifest = JSON.parse(await downloadText(manifestFile.id)) as ProjectManifest; if (manifest.application !== "Olukotan" || manifest.schemaVersion !== 1) continue;
         manifest.storageMode = "google-drive"; const screenplay = await downloadText(screenplayFile.id);
-        projects.push({ manifest, screenplay, projectPath: `browser://${manifest.projectId}/${projectFolderName(manifest.title)}`, readOnly: false, modifiedAt: Date.parse(manifest.updatedAt) || Date.now() });
+        const dataFile = files.find((file) => file.name === "screenplay-data.json");
+        const projectData = dataFile ? migrateProjectData(JSON.parse(await downloadText(dataFile.id))) : migrateProjectData();
+        projects.push({ manifest, screenplay, projectData, projectPath: `browser://${manifest.projectId}/${projectFolderName(manifest.title)}`, readOnly: false, modifiedAt: Date.parse(manifest.updatedAt) || Date.now() });
       } catch { continue; }
     }
     return projects;
   }
 };
-

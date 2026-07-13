@@ -1,13 +1,15 @@
 import { ArrowLeft, Bold, ChevronLeft, ChevronRight, Cloud, Command, FileText, FolderOpen, Italic, PanelLeftClose, PanelRightClose, Redo2, Save, Search, Settings, Underline, Undo2, WifiOff } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { approximatePageCount, wordCount } from "../lib/screenplay";
+import { automaticContinued, autocompleteSuggestions, displaySceneNumber, synchroniseSceneMetadata } from "../lib/screenplay-production";
 import {
   ELEMENT_LABELS, SCENE_PREFIXES, TIMES_OF_DAY, applyEnter, applyTab, collectKnownCharacters,
   collectSceneLocations, createElement, normalizeElementText, normalizedCursorPosition, parseCharacter,
   parseFountain, screenplayPasteElements, serializeFountain, updateElementText,
   type EditResult, type ScreenplayDocument, type ScreenplayElement, type ScreenplayElementType,
 } from "../lib/screenplay-elements";
-import type { ProjectPayload } from "../types";
+import { migrateProjectData, type ProjectData, type ProjectPayload, type ScreenplaySettings } from "../types";
+import { ScreenplaySettingsDialog } from "./ScreenplaySettingsDialog";
 
 const SELECTABLE_TYPES: ScreenplayElementType[] = ["scene-heading", "action", "character", "parenthetical", "dialogue", "transition", "shot", "general"];
 const SHORTCUT_TYPES: Record<string, ScreenplayElementType> = { "1": "scene-heading", "2": "action", "3": "character", "4": "parenthetical", "5": "dialogue", "6": "transition", "7": "shot", "0": "general" };
@@ -17,13 +19,19 @@ interface FocusRequest { index: number; cursor: number }
 
 function cloneDocument(value: ScreenplayDocument): ScreenplayDocument { return structuredClone(value); }
 
-export function Editor({ project, content, dirty, saving, message, onChange, onSave, onHome, onReveal }: {
+export function Editor({ project, content, dirty, saving, message, onChange, onProjectDataChange, onSave, onHome, onReveal }: {
   project: ProjectPayload; content: string; dirty: boolean; saving: boolean; message: string;
-  onChange(value: string): void; onSave(): void; onHome(): void; onReveal(): void;
+  onChange(value: string): void; onProjectDataChange(value: ProjectData): void; onSave(): void; onHome(): void; onReveal(): void;
 }) {
-  const [document, setDocument] = useState<ScreenplayDocument>(() => parseFountain(content));
+  const initial = useRef<ReturnType<typeof synchroniseSceneMetadata> | null>(null);
+  if (!initial.current) initial.current = synchroniseSceneMetadata(parseFountain(content), migrateProjectData(project.projectData));
+  const [document, setDocument] = useState<ScreenplayDocument>(() => initial.current!.document);
+  const [projectData, setProjectData] = useState<ProjectData>(() => initial.current!.projectData);
   const [activeIndex, setActiveIndex] = useState(0);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [screenplaySettingsOpen, setScreenplaySettingsOpen] = useState(false);
+  const [suggestionIndex, setSuggestionIndex] = useState(-1);
+  const [autocompleteOpen, setAutocompleteOpen] = useState(true);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const textareas = useRef(new Map<string, HTMLTextAreaElement>());
   const focusRequest = useRef<FocusRequest | null>(null);
@@ -31,8 +39,18 @@ export function Editor({ project, content, dirty, saving, message, onChange, onS
   const lastSerialized = useRef(content);
 
   useEffect(() => {
+    const fountain = serializeFountain(document);
+    const storedProjectData = migrateProjectData(project.projectData);
+    if (JSON.stringify(projectData) !== JSON.stringify(storedProjectData)) onProjectDataChange(projectData);
+    const hasPersistentScenes = document.elements.some((element) => element.type === "scene-heading" && Boolean(element.text && element.metadata?.sceneId));
+    if (hasPersistentScenes && fountain !== content) { lastSerialized.current = fountain; onChange(fountain); }
+    // Migrate older projects and persist scene IDs once when the editor opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
     if (content === lastSerialized.current) return;
-    const parsed = parseFountain(content); setDocument(parsed); setActiveIndex(0);
+    const prepared = synchroniseSceneMetadata(parseFountain(content), projectData); setDocument(prepared.document); setProjectData(prepared.projectData); setActiveIndex(0);
     history.current = { past: [], future: [] }; lastSerialized.current = content;
   }, [content]);
 
@@ -43,10 +61,12 @@ export function Editor({ project, content, dirty, saving, message, onChange, onS
     focusRequest.current = null;
   }, [document]);
 
-  const commitDocument = (next: ScreenplayDocument, focus?: FocusRequest, record = true) => {
+  const commitDocument = (next: ScreenplayDocument, focus?: FocusRequest, record = true, data: ProjectData = projectData) => {
     if (record) { history.current.past.push(cloneDocument(document)); history.current.past = history.current.past.slice(-150); history.current.future = []; }
-    setDocument(next); if (focus) { setActiveIndex(focus.index); focusRequest.current = focus; }
-    const fountain = serializeFountain(next); lastSerialized.current = fountain; onChange(fountain);
+    const prepared = synchroniseSceneMetadata(next, data);
+    setDocument(prepared.document); setProjectData(prepared.projectData); onProjectDataChange(prepared.projectData);
+    if (focus) { setActiveIndex(focus.index); focusRequest.current = focus; }
+    const fountain = serializeFountain(prepared.document); lastSerialized.current = fountain; onChange(fountain);
   };
   const commitResult = (result: EditResult) => commitDocument({ ...document, elements: result.elements }, { index: result.activeIndex, cursor: result.cursorPosition });
 
@@ -82,13 +102,14 @@ export function Editor({ project, content, dirty, saving, message, onChange, onS
   const updateSceneNumber = (index: number, sceneNumber: string) => {
     const elements = [...document.elements]; const current = elements[index];
     elements[index] = { ...current, metadata: { ...current.metadata, sceneNumber: sceneNumber || undefined } };
-    commitDocument({ ...document, elements }, { index, cursor: current.text.length });
+    const scenes = projectData.scenes.map((scene) => scene.sceneId === current.metadata?.sceneId ? { ...scene, number: sceneNumber || undefined } : scene);
+    commitDocument({ ...document, elements }, { index, cursor: current.text.length }, true, { ...projectData, scenes });
   };
 
   const onTextChange = (index: number, raw: string, cursor: number) => {
     const result = updateElementText(document.elements, index, raw);
     result.cursorPosition = normalizedCursorPosition(result.elements[index].type, raw, cursor);
-    commitResult(result);
+    setAutocompleteOpen(true); setSuggestionIndex(-1); commitResult(result);
   };
 
   const removeOrMerge = (index: number, cursor: number) => {
@@ -111,6 +132,15 @@ export function Editor({ project, content, dirty, saving, message, onChange, onS
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); setActiveIndex(index); setPaletteOpen(true); return; }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") { event.preventDefault(); event.shiftKey ? redo() : undo(); return; }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") { event.preventDefault(); redo(); return; }
+    if (event.key === "Escape" && suggestions.length) { event.preventDefault(); setAutocompleteOpen(false); setSuggestionIndex(-1); return; }
+    if ((event.key === "ArrowDown" || event.key === "ArrowUp") && suggestions.length) {
+      event.preventDefault();
+      setSuggestionIndex((current) => event.key === "ArrowDown" ? (current + 1) % suggestions.length : (current <= 0 ? suggestions.length - 1 : current - 1));
+      return;
+    }
+    if ((event.key === "Enter" || event.key === "Tab") && suggestions.length && (suggestionIndex >= 0 || area.value.trim())) {
+      event.preventDefault(); chooseSuggestion(suggestions[suggestionIndex >= 0 ? suggestionIndex : 0]); return;
+    }
     if (event.key === "Enter") {
       event.preventDefault();
       const result = applyEnter(document.elements, index, area.selectionStart);
@@ -140,26 +170,21 @@ export function Editor({ project, content, dirty, saving, message, onChange, onS
   };
 
   const suggestions = useMemo(() => {
-    if (!active) return [] as string[];
+    if (!active || !autocompleteOpen) return [] as { value: string; type: "character" | "scene-heading"; category: string }[];
     const query = active.text.trim().toLocaleUpperCase("en-GB");
-    if (active.type === "character") return knownCharacters.filter((name) => name.startsWith(parseCharacter(query).name) && name !== parseCharacter(query).name).slice(0, 6);
-    if (active.type === "action") {
-      const characterMatches = knownCharacters.filter((name) => name.startsWith(query) && name !== query);
-      const prefixMatches = SCENE_PREFIXES.filter((prefix) => prefix.startsWith(query));
-      return [...characterMatches, ...prefixMatches].slice(0, 6);
-    }
     if (active.type === "scene-heading") {
-      if (!query || !SCENE_PREFIXES.some((prefix) => query.startsWith(prefix))) return SCENE_PREFIXES.filter((prefix) => prefix.startsWith(query)).slice(0, 6);
+      if (!query || !SCENE_PREFIXES.some((prefix) => query.startsWith(prefix))) return autocompleteSuggestions(active, knownCharacters, SCENE_PREFIXES);
       const afterDash = query.includes(" - ");
-      return (afterDash ? TIMES_OF_DAY.filter((time) => time.startsWith(query.split(" - ").at(-1) ?? "")) : sceneLocations.filter((location) => location.includes(query.replace(/^[A-Z./]+\s*/u, "")))).slice(0, 6);
+      const fragment = afterDash ? (query.split(" - ").at(-1) ?? "") : query.replace(/^[A-Z./]+\s*/u, "");
+      return (afterDash ? TIMES_OF_DAY.filter((time) => time.startsWith(fragment) && time !== fragment) : sceneLocations.filter((location) => location.includes(fragment) && location !== fragment)).slice(0, 6).map((value) => ({ value, type: "scene-heading" as const, category: afterDash ? "Times of Day" : "Locations" }));
     }
-    return [] as string[];
-  }, [active, knownCharacters, sceneLocations]);
+    return autocompleteSuggestions(active, knownCharacters, SCENE_PREFIXES);
+  }, [active, autocompleteOpen, knownCharacters, sceneLocations]);
 
-  const chooseSuggestion = (value: string) => {
+  const chooseSuggestion = (suggestion: { value: string; type: "character" | "scene-heading" }) => {
     if (!active) return;
-    let text = value; let type = active.type;
-    if (active.type === "action") type = SCENE_PREFIXES.includes(value) ? "scene-heading" : "character";
+    const value = suggestion.value;
+    let text = value; let type: ScreenplayElementType = active.type === "action" ? suggestion.type : active.type;
     if (type === "scene-heading") {
       const current = active.text;
       if (SCENE_PREFIXES.includes(value)) text = `${value} `;
@@ -167,15 +192,24 @@ export function Editor({ project, content, dirty, saving, message, onChange, onS
       else text = `${current.match(SCENE_PREFIXES.map((item) => item.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"))?.[0] ?? "INT."} ${value}`;
     }
     const elements = [...document.elements]; elements[activeIndex] = { ...active, type, text: normalizeElementText(type, text), metadata: type === "character" ? { ...active.metadata, characterName: parseCharacter(text).name } : active.metadata };
-    commitDocument({ ...document, elements }, { index: activeIndex, cursor: elements[activeIndex].text.length });
+    setAutocompleteOpen(false); setSuggestionIndex(-1); commitDocument({ ...document, elements }, { index: activeIndex, cursor: elements[activeIndex].text.length });
   };
+
+  const saveScreenplaySettings = (settings: ScreenplaySettings) => {
+    const nextData = migrateProjectData({ ...projectData, screenplaySettings: settings });
+    commitDocument(document, { index: activeIndex, cursor: active?.text.length ?? 0 }, true, nextData);
+    setScreenplaySettingsOpen(false);
+  };
+
+  const activeScene = [...document.elements.slice(0, activeIndex + 1)].reverse().find((element) => element.type === "scene-heading");
+  const activeSceneNumber = activeScene ? displaySceneNumber(activeScene, projectData) : undefined;
 
   return <div className="studio" onClick={() => contextMenu && setContextMenu(null)}>
     <header className="app-bar"><div className="app-left"><button className="icon-button" onClick={onHome} aria-label="Back to home"><ArrowLeft size={19}/></button><span className="mini-wordmark">OLUKOTAN</span><span className="divider"/><div><strong>{project.manifest.title}</strong><small>{dirty ? "Unsaved changes" : message || "Saved locally"}</small></div></div>
-      <div className="app-actions"><span className="offline"><WifiOff size={15}/> Offline</span><button className="secondary compact" onClick={onSave} disabled={!dirty || saving || project.readOnly}><Save size={16}/>{saving ? "Saving…" : "Save"}</button><button className="icon-button" aria-label="Settings"><Settings size={19}/></button></div>
+      <div className="app-actions"><span className="offline"><WifiOff size={15}/> Offline</span><button className="secondary compact" onClick={onSave} disabled={!dirty || saving || project.readOnly}><Save size={16}/>{saving ? "Saving…" : "Save"}</button><button className="icon-button" aria-label="Screenplay settings" onClick={() => setScreenplaySettingsOpen(true)}><Settings size={19}/></button></div>
     </header>
     <aside className="left-sidebar"><div className="panel-heading"><span>Scenes</span><button className="icon-button" aria-label="Collapse scene navigator"><PanelLeftClose size={17}/></button></div><div className="scene-search"><Search size={15}/><input placeholder="Search scenes" aria-label="Search scenes"/></div>
-      <nav className="scene-list" aria-label="Scene navigator">{scenes.length ? scenes.map(({ element, index }, sceneIndex) => <button key={element.id} onClick={() => { setActiveIndex(index); focusRequest.current = { index, cursor: 0 }; setDocument({ ...document }); }}><span>{element.metadata?.sceneNumber ?? sceneIndex + 1}</span><strong>{element.text}</strong></button>) : <p>Your scene headings will appear here.<br/><br/>Start typing: <strong>INT.</strong></p>}</nav>
+      <nav className="scene-list" aria-label="Scene navigator">{scenes.length ? scenes.map(({ element, index }) => <button key={element.metadata?.sceneId ?? element.id} onClick={() => { setActiveIndex(index); focusRequest.current = { index, cursor: 0 }; setDocument({ ...document }); }}><span>{displaySceneNumber(element, projectData) ?? ""}</span><strong>{element.text}</strong></button>) : <p>Your scene headings will appear here.<br/><br/>Start typing: <strong>INT.</strong></p>}</nav>
       <button className="folder-link" onClick={onReveal}><FolderOpen size={16}/> {project.projectPath.startsWith("browser://") ? "Export Fountain file" : "Open project folder"}</button>
     </aside>
     <main className="writing-area"><div className="editor-toolbar">
@@ -186,7 +220,8 @@ export function Editor({ project, content, dirty, saving, message, onChange, onS
       {project.readOnly && <div className="read-only">Read-only mode — this folder cannot be written to. Your original files are unchanged.</div>}
       <div className="page-wrap"><div className="paper screenplay-paper" role="textbox" aria-label="Screenplay editor" aria-multiline="true">
         {document.elements.map((element, index) => <div className={`screenplay-block screenplay-${element.type} ${index === activeIndex ? "is-active" : ""}`} key={element.id} data-element-type={element.type}>
-          {element.type === "scene-heading" && <input className="scene-number-input" aria-label={`Scene number ${index + 1}`} value={element.metadata?.sceneNumber ?? ""} placeholder="#" onFocus={() => setActiveIndex(index)} onChange={(event) => updateSceneNumber(index, event.target.value.replace(/#/g, ""))}/>} 
+          {element.type === "scene-heading" && displaySceneNumber(element, projectData) && projectData.screenplaySettings.sceneNumbers.showInEditor && ["left", "both"].includes(projectData.screenplaySettings.sceneNumbers.position) && (projectData.screenplaySettings.sceneNumbers.mode === "manual" ? <input className="scene-number-input scene-number-left" aria-label={`Scene number ${index + 1}`} value={displaySceneNumber(element, projectData)} onFocus={() => setActiveIndex(index)} onChange={(event) => updateSceneNumber(index, event.target.value.replace(/#/g, ""))}/> : <span className="scene-number-gutter scene-number-left">{displaySceneNumber(element, projectData)}</span>)}
+          {element.type === "scene-heading" && displaySceneNumber(element, projectData) && projectData.screenplaySettings.sceneNumbers.showInEditor && ["right", "both"].includes(projectData.screenplaySettings.sceneNumbers.position) && <span className="scene-number-gutter scene-number-right">{displaySceneNumber(element, projectData)}</span>}
           {element.type === "page-break" ? <button className="explicit-page-break" onClick={() => setActiveIndex(index)}>Page break</button> : <textarea
             ref={(node) => { if (node) textareas.current.set(element.id, node); else textareas.current.delete(element.id); }}
             aria-label={`${ELEMENT_LABELS[element.type]} element ${index + 1}`} value={element.text} readOnly={project.readOnly}
@@ -194,15 +229,17 @@ export function Editor({ project, content, dirty, saving, message, onChange, onS
             onFocus={() => setActiveIndex(index)} onChange={(event) => onTextChange(index, event.target.value, event.target.selectionStart)}
             onKeyDown={(event) => onKeyDown(event, index)} onPaste={(event) => onPaste(event, index)}
             onContextMenu={(event) => { event.preventDefault(); setActiveIndex(index); setContextMenu({ x: event.clientX, y: event.clientY }); }}/>} 
-          {index === activeIndex && suggestions.length > 0 && <div className="screenplay-suggestions" role="listbox" aria-label={`${ELEMENT_LABELS[element.type]} suggestions`}>{suggestions.map((suggestion) => <button key={suggestion} role="option" onMouseDown={(event) => event.preventDefault()} onClick={() => chooseSuggestion(suggestion)}>{suggestion}</button>)}</div>}
+          {automaticContinued(document.elements, index, projectData.screenplaySettings) && <span className="automatic-continued" aria-label="Automatic character continued">(CONT'D)</span>}
+          {index === activeIndex && suggestions.length > 0 && <div className="screenplay-suggestions" role="listbox" aria-label={`${ELEMENT_LABELS[element.type]} suggestions`}>{suggestions.map((suggestion, suggestionPosition) => <button className={suggestionPosition === suggestionIndex ? "selected" : ""} key={`${suggestion.type}-${suggestion.value}`} role="option" aria-label={suggestion.value} aria-selected={suggestionPosition === suggestionIndex} onMouseDown={(event) => event.preventDefault()} onClick={() => chooseSuggestion(suggestion)}><span>{suggestion.value}</span><small>{suggestion.category}</small></button>)}</div>}
         </div>)}
       </div></div>
     </main>
     <aside className="right-sidebar"><div className="panel-heading"><span>Project</span><button className="icon-button" aria-label="Collapse project inspector"><PanelRightClose size={17}/></button></div><div className="inspector-section"><p className="eyebrow">Document</p><h3><FileText size={17}/> Screenplay</h3><dl><div><dt>Active element</dt><dd>{active ? ELEMENT_LABELS[active.type] : "—"}</dd></div><div><dt>Format</dt><dd>Structured Fountain</dd></div><div><dt>Page size</dt><dd>{project.manifest.pageSize}</dd></div><div><dt>Scenes</dt><dd>{scenes.length}</dd></div><div><dt>Words</dt><dd>{wordCount(fountain).toLocaleString()}</dd></div></dl><p className="pagination-note">Page count is approximate while exact font-metric pagination is under development.</p></div>
       <div className="ownership-note"><Cloud size={19}/><strong>Stored on your device</strong><p>{project.projectPath}</p></div>
     </aside>
-    <footer className="status-bar"><span>{message || (dirty ? "Editing" : "All changes saved")}</span><span>{active ? ELEMENT_LABELS[active.type] : ""} · {wordCount(fountain).toLocaleString()} words · ~{pages} {pages === 1 ? "page" : "pages"} · UTF-8</span></footer>
+    <footer className="status-bar"><span>{message || (dirty ? "Editing" : "All changes saved")}</span><span>{activeSceneNumber ? `Scene ${activeSceneNumber} · ` : ""}{active ? ELEMENT_LABELS[active.type] : ""} · {wordCount(fountain).toLocaleString()} words · ~{pages} {pages === 1 ? "page" : "pages"} · UTF-8</span></footer>
     {contextMenu && <div className="element-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} role="menu" onClick={(event) => event.stopPropagation()}>{SELECTABLE_TYPES.map((type) => <button role="menuitem" key={type} onClick={() => changeType(type)}>{ELEMENT_LABELS[type]} <kbd>Ctrl+{Object.entries(SHORTCUT_TYPES).find(([, value]) => value === type)?.[0] ?? ""}</kbd></button>)}</div>}
     {paletteOpen && <div className="command-palette-backdrop" onMouseDown={() => setPaletteOpen(false)}><div className="command-palette" role="dialog" aria-label="Element command palette" onMouseDown={(event) => event.stopPropagation()}><h2>Change screenplay element</h2>{SELECTABLE_TYPES.map((type) => <button key={type} onClick={() => changeType(type)}><span>{ELEMENT_LABELS[type]}</span><kbd>Ctrl+{Object.entries(SHORTCUT_TYPES).find(([, value]) => value === type)?.[0] ?? ""}</kbd></button>)}</div></div>}
+    {screenplaySettingsOpen && <ScreenplaySettingsDialog initial={projectData.screenplaySettings} onClose={() => setScreenplaySettingsOpen(false)} onSave={saveScreenplaySettings}/>} 
   </div>;
 }

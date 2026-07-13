@@ -20,7 +20,7 @@ afterEach(cleanup);
 function setup() {
   const onChange = vi.fn();
   render(<Editor project={project} content={project.screenplay} dirty={false} saving={false} message=""
-    onChange={onChange} onSave={vi.fn()} onHome={vi.fn()} onReveal={vi.fn()}/>);
+    onChange={onChange} onProjectDataChange={vi.fn()} onSave={vi.fn()} onHome={vi.fn()} onReveal={vi.fn()}/>);
   return { onChange };
 }
 

@@ -1,5 +1,5 @@
 import { approximatePageCount, projectFolderName } from "./lib/screenplay";
-import type { AppSettings, CreateProjectInput, ProjectManifest, ProjectPayload, RecentProject } from "./types";
+import { defaultProjectData, migrateProjectData, type AppSettings, type CreateProjectInput, type ProjectData, type ProjectManifest, type ProjectPayload, type RecentProject } from "./types";
 
 const DB_NAME = "olukotan-web";
 const PROJECTS = "projects";
@@ -46,7 +46,7 @@ export const webStore = {
       primaryDocument: "screenplay.fountain", storageMode: "local", language: "en-GB", pageSize: "A4",
       screenplayStandard: "industry-standard", revisionMode: false, currentRevisionSet: null, importHistory: [], exportHistory: [] };
     const screenplay = `Title: ${manifest.title}\nAuthor: ${manifest.author}\nDraft date: ${new Intl.DateTimeFormat("en-GB", { dateStyle: "long" }).format(new Date())}\n\n`;
-    const payload: ProjectPayload = { manifest, screenplay, projectPath: `browser://${id}/${projectFolderName(manifest.title)}`, readOnly: false, modifiedAt: Date.now() };
+    const payload: ProjectPayload = { manifest, screenplay, projectPath: `browser://${id}/${projectFolderName(manifest.title)}`, readOnly: false, modifiedAt: Date.now(), projectData: defaultProjectData() };
     await this.importProject(payload); return payload;
   },
   async importProject(payload: ProjectPayload): Promise<void> {
@@ -64,13 +64,13 @@ export const webStore = {
     if (savedRecovery) {
       try { const recovery = JSON.parse(savedRecovery) as { content: string; modifiedAt: number }; if (recovery.modifiedAt > payload.modifiedAt && recovery.content !== payload.screenplay) payload.recovery = recovery; } catch { localStorage.removeItem(`olukotan-recovery:${path}`); }
     }
-    return payload;
+    payload.projectData = migrateProjectData(payload.projectData); return payload;
   },
-  async save(path: string, content: string): Promise<number> {
+  async save(path: string, content: string, projectData: ProjectData): Promise<number> {
     const id = path.replace(/^browser:\/\//, "").split("/")[0];
     const stored = await request<StoredProject | undefined>("readonly", PROJECTS, (store) => store.get(id));
     if (!stored) throw new Error("The local project copy is missing.");
-    const modifiedAt = Date.now(); stored.payload.screenplay = content; stored.payload.modifiedAt = modifiedAt;
+    const modifiedAt = Date.now(); stored.payload.screenplay = content; stored.payload.projectData = migrateProjectData(projectData); stored.payload.modifiedAt = modifiedAt;
     stored.payload.manifest.updatedAt = new Date(modifiedAt).toISOString(); stored.lastOpenedAt = stored.payload.manifest.updatedAt;
     await request<IDBValidKey>("readwrite", PROJECTS, (store) => store.put(stored)); localStorage.removeItem(`olukotan-recovery:${path}`); return modifiedAt;
   },
@@ -92,4 +92,3 @@ export const webStore = {
     const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = `${projectFolderName(project.manifest.title)}.fountain`; link.click(); URL.revokeObjectURL(link.href);
   }
 };
-
