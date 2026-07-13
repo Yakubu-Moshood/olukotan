@@ -108,4 +108,3 @@ export default function App() {
     {createOpen && <CreateProjectDialog onClose={() => setCreateOpen(false)} onCreated={enterProject} defaultAuthor={settings.defaultAuthor} defaultFolder={settings.defaultProjectFolder || (webMode ? "This device" : "")} webMode={webMode}/>} 
     {settingsOpen && <SettingsDialog initial={settings} onClose={() => setSettingsOpen(false)} webMode={webMode} onSave={async (value) => { await platform.saveSettings(value); setSettings(value); setSettingsOpen(false); }}/>}</>;
 }
-

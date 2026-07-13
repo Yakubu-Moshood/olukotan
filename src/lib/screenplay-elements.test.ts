@@ -1,0 +1,142 @@
+import { describe, expect, it } from "vitest";
+import {
+  applyEnter, applyTab, collectKnownCharacters, createElement, detectElementType,
+  getNextElementType, isLikelyCharacter, normalizeElementText, parseCharacter,
+  parseFountain, serializeFountain, updateElementText,
+  type ScreenplayElementType,
+} from "./screenplay-elements";
+
+describe("screenplay transition engine", () => {
+  const next = (currentType: ScreenplayElementType, currentText = "") => getNextElementType({
+    currentType, currentText, knownCharacters: [], cursorPosition: currentText.length, isElementEmpty: !currentText,
+  });
+
+  it.each([
+    ["scene-heading", "INT. OFFICE - DAY", "action"],
+    ["character", "DANIEL", "dialogue"],
+    ["parenthetical", "(quietly)", "dialogue"],
+    ["transition", "CUT TO:", "scene-heading"],
+    ["shot", "CLOSE ON:", "action"],
+    ["action", "", "character"],
+    ["character", "", "action"],
+    ["dialogue", "", "action"],
+  ] as const)("%s plus Enter becomes %s", (type, text, expected) => expect(next(type, text)).toBe(expected));
+
+  it("uses the deliberate Action → Character → Scene Heading → Transition → Shot cycle", () => {
+    let elements = [createElement("action")];
+    for (const expected of ["character", "scene-heading", "transition", "shot", "action"] as const) {
+      const result = applyTab(elements, 0); elements = result.elements; expect(elements[0].type).toBe(expected);
+    }
+    expect(applyTab(elements, 0, true).elements[0].type).toBe("shot");
+  });
+});
+
+describe("screenplay content detection", () => {
+  it.each([
+    ["int. office - day", "scene-heading"],
+    ["EXT. ROAD - NIGHT", "scene-heading"],
+    ["CUT TO:", "transition"],
+    ["The BBC report continues.", "action"],
+    ["He sees the RED FILE.", "action"],
+  ] as const)("detects %s as %s", (text, expected) => expect(detectElementType(text, { afterAction: true })).toBe(expected));
+
+  it("recognises known characters and extensions without treating action as character", () => {
+    expect(detectElementType("DANIEL", { afterAction: true, knownCharacters: ["DANIEL"] })).toBe("character");
+    expect(parseCharacter("DANIEL (V.O.)")).toEqual({ name: "DANIEL", extension: "V.O." });
+    expect(isLikelyCharacter("A sign reads NO ENTRY.", ["DANIEL"])).toBe(false);
+  });
+});
+
+describe("element-aware casing", () => {
+  it.each([
+    ["character", "daniel", "DANIEL"],
+    ["scene-heading", "int. office - day", "INT. OFFICE - DAY"],
+    ["parenthetical", "quietly", "(quietly)"],
+    ["dialogue", "Not tonight.", "Not tonight."],
+  ] as const)("normalises %s", (type, input, expected) => expect(normalizeElementText(type, input)).toBe(expected));
+
+  it("preserves Yoruba diacritics while uppercasing underlying text", () => {
+    expect(normalizeElementText("character", "Ṣẹ́gun")).toBe("ṢẸ́GUN");
+    expect(normalizeElementText("character", "Àdùnnì")).toBe("ÀDÙNNÌ");
+    expect(normalizeElementText("character", "Olúwatóbilọ́ba")).toBe("OLÚWATÓBILỌ́BA");
+  });
+});
+
+describe("required keyboard writing flows", () => {
+  it("opens a scene and moves naturally into action", () => {
+    let elements = [createElement("scene-heading")];
+    elements = updateElementText(elements, 0, "int. reception centre - night").elements;
+    expect(elements[0].text).toBe("INT. RECEPTION CENTRE - NIGHT");
+    const entered = applyEnter(elements, 0, elements[0].text.length);
+    expect(entered.elements[1].type).toBe("action");
+  });
+
+  it("moves from action to dialogue without a mouse", () => {
+    let elements = [createElement("action", "Daniel stands over the locked drawer.")];
+    let result = applyEnter(elements, 0, elements[0].text.length); elements = result.elements;
+    expect(elements[1].type).toBe("action");
+    result = applyTab(elements, 1); elements = result.elements;
+    elements = updateElementText(elements, 1, "daniel", true).elements;
+    expect(elements[1]).toMatchObject({ type: "character", text: "DANIEL" });
+    result = applyEnter(elements, 1, elements[1].text.length);
+    expect(result.elements[2].type).toBe("dialogue");
+  });
+
+  it("converts an opening parenthesis under a character and returns to dialogue", () => {
+    let elements = [createElement("character", "DANIEL"), createElement("dialogue")];
+    elements = updateElementText(elements, 1, "(").elements;
+    expect(elements[1]).toMatchObject({ type: "parenthetical", text: "()" });
+    elements = updateElementText(elements, 1, "(quietly)").elements;
+    const result = applyEnter(elements, 1, elements[1].text.length);
+    expect(result.elements[2].type).toBe("dialogue");
+    const unused = applyEnter([createElement("character", "DANIEL"), createElement("parenthetical", "()")], 1, 1);
+    expect(unused.elements[1].type).toBe("dialogue");
+  });
+
+  it("supports rapid alternating speakers and consecutive action paragraphs", () => {
+    let elements = [createElement("character", "DANIEL"), createElement("dialogue", "Not tonight.")];
+    let result = applyEnter(elements, 1, elements[1].text.length); elements = result.elements;
+    expect(elements[2].type).toBe("action");
+    elements = applyTab(elements, 2).elements;
+    elements = updateElementText(elements, 2, "oliver", true).elements;
+    expect(elements[2]).toMatchObject({ type: "character", text: "OLIVER" });
+    expect(applyEnter(elements, 2, elements[2].text.length).elements[3].type).toBe("dialogue");
+
+    elements = [createElement("action", "One action paragraph.")];
+    result = applyEnter(elements, 0, elements[0].text.length); elements = result.elements;
+    elements = updateElementText(elements, 1, "Another normal sentence.").elements;
+    expect(elements[1].type).toBe("action");
+  });
+
+  it("collects character names for autocomplete", () => {
+    const characters = collectKnownCharacters([createElement("character", "DANIEL"), createElement("character", "OLIVER")]);
+    expect(characters.filter((name) => name.startsWith("DAN"))).toEqual(["DANIEL"]);
+  });
+});
+
+describe("structured Fountain round trip", () => {
+  it("preserves element types and text across save and reopen", () => {
+    const original = {
+      preamble: "Title: Àdùnnì\nAuthor: Ṣẹ́gun",
+      elements: [
+        createElement("scene-heading", "int. reception centre - night", { sceneNumber: "12" }),
+        createElement("action", "Daniel stands over the locked drawer."),
+        createElement("character", "daniel (v.o.)"),
+        createElement("parenthetical", "quietly"),
+        createElement("dialogue", "Not tonight."),
+        createElement("transition", "cut to:"),
+        createElement("shot", "close on:"),
+        createElement("general", "A private production note."),
+      ],
+    };
+    const reopened = parseFountain(serializeFountain(original));
+    expect(reopened.preamble).toBe(original.preamble);
+    expect(reopened.elements.map(({ type, text }) => ({ type, text }))).toEqual(original.elements.map(({ type, text }) => ({ type, text })));
+  });
+
+  it("forces uppercase action lines to remain action", () => {
+    const fountain = serializeFountain({ preamble: "", elements: [createElement("action", "NO ENTRY")] });
+    expect(fountain).toContain("!NO ENTRY");
+    expect(parseFountain(fountain).elements[0]).toMatchObject({ type: "action", text: "NO ENTRY" });
+  });
+});
