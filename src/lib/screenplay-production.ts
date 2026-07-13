@@ -2,6 +2,20 @@ import type { ProjectData, SceneMetadata, ScreenplaySettings } from "../types";
 import { migrateProjectData } from "../types";
 import { parseCharacter, type ScreenplayDocument, type ScreenplayElement } from "./screenplay-elements";
 
+export type AutocompleteContext = "none" | "character" | "scene-prefix" | "scene-location" | "scene-time" | "transition" | "shot";
+
+export function getAutocompleteContext(element: ScreenplayElement | undefined): AutocompleteContext {
+  if (!element) return "none";
+  if (element.type === "character") return "character";
+  if (element.type === "transition") return "transition";
+  if (element.type === "shot") return "shot";
+  if (element.type !== "scene-heading") return "none";
+  const text = element.text.trim().toLocaleUpperCase("en-GB");
+  if (!/^(?:INT\.\/EXT\.|EXT\.\/INT\.|INT\.|EXT\.|I\/E\.|EST\.)/u.test(text)) return "scene-prefix";
+  if (/\s+-\s*[^-]*$/u.test(text)) return "scene-time";
+  return "scene-location";
+}
+
 function stableId() {
   return globalThis.crypto?.randomUUID?.() ?? `scene-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
@@ -66,18 +80,14 @@ export function autocompleteSuggestions(
   knownCharacters: string[],
   scenePrefixes: string[],
 ) {
-  if (!element || !["action", "character", "scene-heading"].includes(element.type)) return [];
+  const context = getAutocompleteContext(element);
+  if (!element || !["character", "scene-prefix"].includes(context)) return [];
   const query = element.text.trim().toLocaleUpperCase("en-GB");
-  if (element.type === "character") return knownCharacters
+  if (context === "character") return knownCharacters
     .filter((name) => name.startsWith(parseCharacter(query).name) && name !== parseCharacter(query).name)
     .map((value) => ({ value, type: "character" as const, category: "Characters" }));
-  if (element.type === "scene-heading") return scenePrefixes
+  if (context === "scene-prefix") return scenePrefixes
     .filter((prefix) => prefix.startsWith(query))
     .map((value) => ({ value, type: "scene-heading" as const, category: "Scene Headings" }));
-
-  const characters = knownCharacters.filter((name) => !query || name.startsWith(query))
-    .map((value) => ({ value, type: "character" as const, category: "Characters" }));
-  const prefixes = scenePrefixes.filter((prefix) => !query || prefix.startsWith(query))
-    .map((value) => ({ value, type: "scene-heading" as const, category: "Scene Headings" }));
-  return [...characters, ...prefixes].slice(0, 8);
+  return [];
 }

@@ -1,7 +1,7 @@
 import { ArrowLeft, Bold, ChevronLeft, ChevronRight, Cloud, Command, FileText, FolderOpen, Italic, PanelLeftClose, PanelRightClose, Redo2, Save, Search, Settings, Underline, Undo2, WifiOff } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { approximatePageCount, wordCount } from "../lib/screenplay";
-import { automaticContinued, autocompleteSuggestions, displaySceneNumber, synchroniseSceneMetadata } from "../lib/screenplay-production";
+import { automaticContinued, autocompleteSuggestions, displaySceneNumber, getAutocompleteContext, synchroniseSceneMetadata } from "../lib/screenplay-production";
 import {
   ELEMENT_LABELS, SCENE_PREFIXES, TIMES_OF_DAY, applyEnter, applyTab, collectKnownCharacters,
   collectSceneLocations, createElement, normalizeElementText, normalizedCursorPosition, parseCharacter,
@@ -172,12 +172,13 @@ export function Editor({ project, content, dirty, saving, message, onChange, onP
 
   const suggestions = useMemo(() => {
     if (!active || !autocompleteOpen) return [] as { value: string; type: "character" | "scene-heading"; category: string }[];
+    const context = getAutocompleteContext(active);
+    if (context === "none" || context === "transition" || context === "shot") return [];
     const query = active.text.trim().toLocaleUpperCase("en-GB");
-    if (active.type === "scene-heading") {
-      if (!query || !SCENE_PREFIXES.some((prefix) => query.startsWith(prefix))) return autocompleteSuggestions(active, knownCharacters, SCENE_PREFIXES);
-      const afterDash = query.includes(" - ");
-      const fragment = afterDash ? (query.split(" - ").at(-1) ?? "") : query.replace(/^[A-Z./]+\s*/u, "");
-      return (afterDash ? TIMES_OF_DAY.filter((time) => time.startsWith(fragment) && time !== fragment) : sceneLocations.filter((location) => location.includes(fragment) && location !== fragment)).slice(0, 6).map((value) => ({ value, type: "scene-heading" as const, category: afterDash ? "Times of Day" : "Locations" }));
+    if (context === "scene-location" || context === "scene-time") {
+      const fragment = context === "scene-time" ? (query.split(" - ").at(-1) ?? "") : query.replace(/^[A-Z./]+\s*/u, "");
+      const values = context === "scene-time" ? TIMES_OF_DAY : sceneLocations;
+      return values.filter((value) => value.startsWith(fragment) && value !== fragment).slice(0, 6).map((value) => ({ value, type: "scene-heading" as const, category: context === "scene-time" ? "Times of Day" : "Locations" }));
     }
     return autocompleteSuggestions(active, knownCharacters, SCENE_PREFIXES);
   }, [active, autocompleteOpen, knownCharacters, sceneLocations]);
