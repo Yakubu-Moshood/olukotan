@@ -1,8 +1,7 @@
-
 import { describe, expect, it } from "vitest";
 import { defaultProjectData, migrateProjectData } from "../types";
 import { createElement, parseFountain, serializeFountain } from "./screenplay-elements";
-import { automaticContinued, autocompleteSuggestions, getAutocompleteContext, removeSceneNumbers, synchroniseSceneMetadata } from "./screenplay-production";
+import { automaticContinued, autocompleteSuggestions, getAutocompleteContext, removeSceneNumbers, renderedCharacterCue, synchroniseSceneMetadata } from "./screenplay-production";
 
 describe("production scene metadata", () => {
   it("assigns automatic numbers in script order and renumbers after a move", () => {
@@ -70,6 +69,16 @@ describe("metadata-aware character continueds", () => {
     ];
     expect(automaticContinued(elements, 4, defaultProjectData().screenplaySettings)).toBe(false);
   });
+
+  it("renders authored extensions and automatic CONT'D as one cue without duplicates", () => {
+    const elements = [
+      createElement("character", "DEJI (V.O.)"), createElement("dialogue", "First."),
+      createElement("action", "A door slams."), createElement("character", "DEJI (V.O.)"),
+    ];
+    expect(renderedCharacterCue(elements, 3, defaultProjectData().screenplaySettings)).toBe("DEJI (V.O.) (CONT'D)");
+    elements[3] = createElement("character", "DEJI (V.O.) (CONT'D)");
+    expect(renderedCharacterCue(elements, 3, defaultProjectData().screenplaySettings)).toBe("DEJI (V.O.) (CONT'D)");
+  });
 });
 
 describe("context-aware autocomplete", () => {
@@ -91,6 +100,13 @@ describe("context-aware autocomplete", () => {
       .map((item) => item.value)).toEqual(["EMEKA", "EMMANUEL"]);
   });
 
+  it("offers professional extensions only after an unmatched opening parenthesis", () => {
+    expect(getAutocompleteContext(createElement("character", "TOBIAS ("))).toBe("character-extension");
+    expect(autocompleteSuggestions(createElement("character", "TOBIAS (V"), [], []).map((item) => item.value)).toEqual(["V.O.", "VOICE OVER"]);
+    expect(autocompleteSuggestions(createElement("character", "TOBIAS (O"), [], []).map((item) => item.value)).toEqual(["O.S.", "OFF SCREEN"]);
+    expect(getAutocompleteContext(createElement("character", "TOBIAS (V.O.)"))).toBe("character-name");
+  });
+
   it("filters prefixes only in Scene Heading prefix context", () => {
     const element = createElement("scene-heading", "I");
     const result = autocompleteSuggestions(element, ["DEJI"], ["INT.", "INT./EXT.", "I/E.", "EXT."]);
@@ -104,4 +120,3 @@ describe("context-aware autocomplete", () => {
     expect(getAutocompleteContext(createElement("scene-heading", "INT. OFFICE -"))).toBe("scene-time");
   });
 });
-

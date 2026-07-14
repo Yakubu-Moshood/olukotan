@@ -1,13 +1,13 @@
-
 import type { ProjectData, SceneMetadata, ScreenplaySettings } from "../types";
 import { migrateProjectData } from "../types";
 import { parseCharacter, serializeFountain, type ScreenplayDocument, type ScreenplayElement } from "./screenplay-elements";
 
-export type AutocompleteContext = "none" | "character" | "scene-prefix" | "scene-location" | "scene-time" | "transition" | "shot";
+export const CHARACTER_EXTENSIONS = ["V.O.", "O.S.", "CONT'D", "PRE-LAP", "INTERCOM", "FILTERED", "OFF SCREEN", "VOICE OVER"];
+export type AutocompleteContext = "none" | "character-name" | "character-extension" | "scene-prefix" | "scene-location" | "scene-time" | "transition" | "shot";
 
 export function getAutocompleteContext(element: ScreenplayElement | undefined): AutocompleteContext {
   if (!element) return "none";
-  if (element.type === "character") return "character";
+  if (element.type === "character") return element.text.lastIndexOf("(") > element.text.lastIndexOf(")") ? "character-extension" : "character-name";
   if (element.type === "transition") return "transition";
   if (element.type === "shot") return "shot";
   if (element.type !== "scene-heading") return "none";
@@ -99,20 +99,32 @@ export function automaticContinued(elements: ScreenplayElement[], index: number,
   return false;
 }
 
+export function renderedCharacterCue(elements: ScreenplayElement[], index: number, settings: ScreenplaySettings) {
+  const parsed = parseCharacter(elements[index]?.text ?? "");
+  const extensions = [...parsed.extensions];
+  const hasManualContinued = extensions.some((extension) => extension.replace(/[’`]/gu, "'").toLocaleUpperCase("en-GB") === "CONT'D");
+  if (automaticContinued(elements, index, settings) && !hasManualContinued) extensions.push("CONT'D");
+  return [parsed.name, ...extensions.map((extension) => `(${extension})`)].filter(Boolean).join(" ");
+}
+
 export function autocompleteSuggestions(
   element: ScreenplayElement | undefined,
   knownCharacters: string[],
   scenePrefixes: string[],
 ) {
   const context = getAutocompleteContext(element);
-  if (!element || !["character", "scene-prefix"].includes(context)) return [];
+  if (!element || !["character-name", "character-extension", "scene-prefix"].includes(context)) return [];
   const query = element.text.trim().toLocaleUpperCase("en-GB");
-  if (context === "character") return knownCharacters
+  if (context === "character-name") return knownCharacters
     .filter((name) => name.startsWith(parseCharacter(query).name) && name !== parseCharacter(query).name)
     .map((value) => ({ value, type: "character" as const, category: "Characters" }));
+  if (context === "character-extension") {
+    const partial = query.slice(query.lastIndexOf("(") + 1).trim();
+    return CHARACTER_EXTENSIONS.filter((extension) => extension.startsWith(partial) && extension !== partial)
+      .map((value) => ({ value, type: "character-extension" as const, category: "Character Extensions" }));
+  }
   if (context === "scene-prefix") return scenePrefixes
     .filter((prefix) => prefix.startsWith(query))
     .map((value) => ({ value, type: "scene-heading" as const, category: "Scene Headings" }));
   return [];
 }
-

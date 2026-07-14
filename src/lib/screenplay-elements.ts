@@ -1,4 +1,3 @@
-
 export type ScreenplayElementType =
   | "scene-heading" | "action" | "character" | "parenthetical" | "dialogue"
   | "transition" | "shot" | "general" | "section" | "synopsis" | "note" | "page-break";
@@ -12,6 +11,7 @@ export interface ScreenplayElement {
     sceneNumber?: string;
     characterName?: string;
     characterExtension?: string;
+    characterExtensions?: string[];
     revisionSet?: string;
     omitted?: boolean;
     dualDialogueGroupId?: string;
@@ -55,7 +55,7 @@ export const COMMON_SHOTS = ["CLOSE ON:", "ANGLE ON", "INSERT:", "POV:", "WIDE S
 const COMMITTED_SCENE_PREFIX = /^(?:INT\.\/EXT\.|EXT\.\/INT\.|INT\.|EXT\.|I\/E\.|EST\.)(?:\s|$)/iu;
 
 const SCENE_PATTERN = /^(?:INT\.|EXT\.|INT\.\/EXT\.|EXT\.\/INT\.|I\/E\.|I\/E\.|EST\.)\s*/iu;
-const CHARACTER_PATTERN = /^([^()]{1,40}?)(?:\s+\(([^)]+)\))?$/u;
+const CHARACTER_EXTENSION_PATTERN = /\(([^)]*)\)/gu;
 const STRUCTURAL_MARKER = /^\/\*\s*OLUKOTAN:([a-z-]+)\s*\*\/$/i;
 const SCENE_ID_MARKER = /^\/\*\s*OLUKOTAN:SCENE-ID:([^*]+)\*\/$/i;
 
@@ -87,9 +87,15 @@ export function normalizedCursorPosition(type: ScreenplayElementType, rawText: s
 }
 
 export function parseCharacter(text: string) {
-  const match = normalizeElementText("character", text).match(CHARACTER_PATTERN);
-  if (!match) return { name: normalizeElementText("character", text), extension: undefined };
-  return { name: match[1].trim(), extension: match[2]?.trim() };
+  const normalized = normalizeElementText("character", text);
+  const firstExtension = normalized.indexOf("(");
+  const name = (firstExtension >= 0 ? normalized.slice(0, firstExtension) : normalized).trim();
+  const extensions = [...normalized.matchAll(CHARACTER_EXTENSION_PATTERN)].map((match) => match[1].trim()).filter(Boolean);
+  return { name, extensions, extension: extensions[0] };
+}
+
+export function characterCueText(name: string, extensions: string[]) {
+  return [name.trim().toLocaleUpperCase("en-GB"), ...extensions.map((extension) => `(${extension.trim().toLocaleUpperCase("en-GB")})`)].filter(Boolean).join(" ");
 }
 
 export function isSceneHeading(text: string) { return SCENE_PATTERN.test(text.trim()); }
@@ -104,8 +110,8 @@ export function isLikelyCharacter(text: string, knownCharacters: string[] = [], 
   if (!upper || upper.length > 42 || /[.!?:]$/.test(upper)) return false;
   const parsed = parseCharacter(upper);
   if (knownCharacters.some((name) => name === parsed.name)) return true;
-  if (explicit) return /^[\p{L}\p{M}' -]{1,32}(?:\s+\([^)]+\))?$/u.test(upper);
-  return text === upper && upper.split(/\s+/u).length <= 3 && /^[\p{Lu}\p{M}' -]+(?:\s+\([^)]+\))?$/u.test(upper);
+  if (explicit) return /^[\p{L}\p{M}' -]{1,32}(?:\s+\([^)]+\))*$/u.test(upper);
+  return text === upper && parseCharacter(upper).name.split(/\s+/u).length <= 3 && /^[\p{Lu}\p{M}' -]+(?:\s+\([^)]+\))*$/u.test(upper);
 }
 
 export function detectElementType(text: string, options: { knownCharacters?: string[]; afterAction?: boolean; explicitCharacter?: boolean } = {}): ScreenplayElementType {
@@ -160,7 +166,7 @@ export function updateElementText(elements: ScreenplayElement[], index: number, 
   if (type === "action" && COMMITTED_SCENE_PREFIX.test(rawText.trimStart())) type = "scene-heading";
   else if (type === "dialogue" && rawText.trimStart().startsWith("(")) type = "parenthetical";
   const text = normalizeElementText(type, rawText);
-  const metadata = type === "character" ? (() => { const value = parseCharacter(text); return { ...current.metadata, characterName: value.name, characterExtension: value.extension }; })() : current.metadata;
+  const metadata = type === "character" ? (() => { const value = parseCharacter(text); return { ...current.metadata, characterName: value.name, characterExtension: value.extension, characterExtensions: value.extensions }; })() : current.metadata;
   const next = elements.map((element, position) => position === index ? { ...element, type, text, metadata } : element);
   return { elements: next, activeIndex: index, cursorPosition: normalizedCursorPosition(type, rawText, rawText.length) };
 }
@@ -171,7 +177,8 @@ export function applyEnter(elements: ScreenplayElement[], index: number, cursorP
   const characterName = parseCharacter(current.text).name;
   const exactStandaloneKnownCharacter = current.text.trim().toLocaleUpperCase("en-GB") === characterName && knownCharacters.includes(characterName);
   if (current.type === "action" && exactStandaloneKnownCharacter) {
-    const character = { ...current, type: "character" as const, text: normalizeElementText("character", current.text), metadata: { ...current.metadata, characterName: parseCharacter(current.text).name, characterExtension: parseCharacter(current.text).extension } };
+    const parsed = parseCharacter(current.text);
+    const character = { ...current, type: "character" as const, text: normalizeElementText("character", current.text), metadata: { ...current.metadata, characterName: parsed.name, characterExtension: parsed.extension, characterExtensions: parsed.extensions } };
     const dialogue = createElement("dialogue");
     const next = [...elements]; next.splice(index, 1, character, dialogue);
     return { elements: next, activeIndex: index + 1, cursorPosition: 0 };
@@ -210,7 +217,7 @@ function elementFromLine(type: ScreenplayElementType, text: string): ScreenplayE
   const element = createElement(type, cleanText);
   if (type === "character") {
     const parsed = parseCharacter(element.text);
-    element.metadata = { characterName: parsed.name, characterExtension: parsed.extension };
+    element.metadata = { characterName: parsed.name, characterExtension: parsed.extension, characterExtensions: parsed.extensions };
   }
   if (type === "scene-heading") {
     if (sceneNumber) element.metadata = { sceneNumber };
@@ -293,4 +300,3 @@ export function screenplayPasteElements(text: string): ScreenplayElement[] {
   const parsed = parseFountain(text);
   return parsed.elements.length ? parsed.elements : [createElement("action", text)];
 }
-

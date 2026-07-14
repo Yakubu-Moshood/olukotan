@@ -1,4 +1,3 @@
-
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
@@ -26,7 +25,7 @@ function setup() {
 }
 
 describe("structured screenplay editor integration", () => {
-  it("completes scene â†’ action â†’ character â†’ dialogue using Enter and Tab", () => {
+  it("completes scene → action → character → dialogue using Enter and Tab", () => {
     setup();
     const scene = screen.getByLabelText("Scene Heading element 1") as HTMLTextAreaElement;
     fireEvent.change(scene, { target: { value: "int. reception centre - night", selectionStart: 29 } });
@@ -162,5 +161,43 @@ describe("structured screenplay editor integration", () => {
     fireEvent.click(screen.getByRole("option", { name: "DEJI" }));
     expect(screen.getByLabelText("Character element 4")).toHaveValue("DEJI");
   });
-});
 
+  it("completes professional character extensions and supports multiple extensions", () => {
+    setup();
+    const scene = screen.getByLabelText("Scene Heading element 1") as HTMLTextAreaElement;
+    fireEvent.change(scene, { target: { value: "INT. ROOM - DAY", selectionStart: 15 } }); fireEvent.keyDown(scene, { key: "Enter" });
+    fireEvent.keyDown(screen.getByLabelText("Action element 2"), { key: "Tab" });
+    const character = screen.getByLabelText("Character element 2") as HTMLTextAreaElement;
+    fireEvent.change(character, { target: { value: "tobias (v", selectionStart: 9 } });
+    expect(screen.getByRole("option", { name: "V.O." })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("option", { name: "V.O." }));
+    expect(character).toHaveValue("TOBIAS (V.O.)");
+    fireEvent.change(character, { target: { value: "TOBIAS (V.O.) (O", selectionStart: 16 } });
+    fireEvent.click(screen.getByRole("option", { name: "O.S." }));
+    expect(character).toHaveValue("TOBIAS (V.O.) (O.S.)");
+    fireEvent.keyDown(character, { key: "Enter" });
+    expect(screen.getByLabelText("Dialogue element 3")).toBeInTheDocument();
+  });
+
+  it("keeps automatic CONT'D attached to the character cue and suppresses a manual duplicate", () => {
+    setup();
+    const scene = screen.getByLabelText("Scene Heading element 1") as HTMLTextAreaElement;
+    fireEvent.change(scene, { target: { value: "INT. ROOM - DAY", selectionStart: 15 } }); fireEvent.keyDown(scene, { key: "Enter" });
+    fireEvent.keyDown(screen.getByLabelText("Action element 2"), { key: "Tab" });
+    const first = screen.getByLabelText("Character element 2") as HTMLTextAreaElement;
+    fireEvent.change(first, { target: { value: "deji", selectionStart: 4 } }); fireEvent.keyDown(first, { key: "Enter" });
+    const dialogue = screen.getByLabelText("Dialogue element 3") as HTMLTextAreaElement;
+    fireEvent.change(dialogue, { target: { value: "Wait.", selectionStart: 5 } }); fireEvent.keyDown(dialogue, { key: "Enter" });
+    const action = screen.getByLabelText("Action element 4") as HTMLTextAreaElement;
+    fireEvent.change(action, { target: { value: "A door slams.", selectionStart: 13 } }); fireEvent.keyDown(action, { key: "Enter" });
+    fireEvent.keyDown(screen.getByLabelText("Action element 5"), { key: "Tab" });
+    const repeated = screen.getByLabelText("Character element 5") as HTMLTextAreaElement;
+    fireEvent.change(repeated, { target: { value: "deji", selectionStart: 4 } });
+    const cue = repeated.closest(".character-cue");
+    expect(cue).toHaveAttribute("data-rendered-cue", "DEJI (CONT'D)");
+    expect(screen.getByLabelText("Automatic character continued")).toHaveClass("automatic-continued");
+    fireEvent.change(repeated, { target: { value: "DEJI (CONT'D)", selectionStart: 13 } });
+    expect(cue).toHaveAttribute("data-rendered-cue", "DEJI (CONT'D)");
+    expect(screen.queryByLabelText("Automatic character continued")).not.toBeInTheDocument();
+  });
+});

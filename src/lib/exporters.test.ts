@@ -1,4 +1,3 @@
-
 import { describe, expect, it } from "vitest";
 import { defaultProjectData, type ExportFormat, type ProjectPayload } from "../types";
 import { createElement } from "./screenplay-elements";
@@ -28,5 +27,18 @@ describe("screenplay exporters", () => {
     const fdx = await exportScreenplay("fdx", context); expect(fdx.data).toContain('<Paragraph Type="Scene Heading" Number="1"');
     const html = await exportScreenplay("html", context); expect(html.data).toContain('class="scene-heading"');
   });
-});
 
+  it("keeps extensions and derived CONT'D in one structured export cue", async () => {
+    const continuation = synchroniseSceneMetadata({ preamble: "", elements: [
+      createElement("character", "DEJI (V.O.)"), createElement("dialogue", "First."),
+      createElement("action", "A pause."), createElement("character", "DEJI (V.O.)"),
+    ] }, defaultProjectData());
+    const context = { project, document: continuation.document, projectData: continuation.projectData, options };
+    const fdx = await exportScreenplay("fdx", context);
+    expect(fdx.data).toContain('<Paragraph Type="Character"><Text>DEJI (V.O.) (CONT\'D)</Text></Paragraph>');
+    const pdf = new TextDecoder().decode((await exportScreenplay("pdf", context)).data as Uint8Array);
+    expect(pdf).toContain("DEJI \\(V.O.\\) \\(CONT'D\\)");
+    const fountain = await exportScreenplay("fountain", context);
+    expect(fountain.data).not.toContain("(CONT'D)");
+  });
+});

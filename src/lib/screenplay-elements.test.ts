@@ -1,4 +1,3 @@
-
 import { describe, expect, it } from "vitest";
 import {
   applyEnter, applyTab, collectKnownCharacters, createElement, detectElementType,
@@ -23,7 +22,7 @@ describe("screenplay transition engine", () => {
     ["dialogue", "", "action"],
   ] as const)("%s plus Enter becomes %s", (type, text, expected) => expect(next(type, text)).toBe(expected));
 
-  it("uses the deliberate Action â†’ Character â†’ Scene Heading â†’ Transition â†’ Shot cycle", () => {
+  it("uses the deliberate Action → Character → Scene Heading → Transition → Shot cycle", () => {
     let elements = [createElement("action")];
     for (const expected of ["character", "scene-heading", "transition", "shot", "action"] as const) {
       const result = applyTab(elements, 0); elements = result.elements; expect(elements[0].type).toBe(expected);
@@ -43,7 +42,7 @@ describe("screenplay content detection", () => {
 
   it("recognises known characters and extensions without treating action as character", () => {
     expect(detectElementType("DANIEL", { afterAction: true, knownCharacters: ["DANIEL"] })).toBe("character");
-    expect(parseCharacter("DANIEL (V.O.)")).toEqual({ name: "DANIEL", extension: "V.O." });
+    expect(parseCharacter("DANIEL (V.O.)")).toEqual({ name: "DANIEL", extension: "V.O.", extensions: ["V.O."] });
     expect(isLikelyCharacter("A sign reads NO ENTRY.", ["DANIEL"])).toBe(false);
   });
 });
@@ -57,9 +56,9 @@ describe("element-aware casing", () => {
   ] as const)("normalises %s", (type, input, expected) => expect(normalizeElementText(type, input)).toBe(expected));
 
   it("preserves Yoruba diacritics while uppercasing underlying text", () => {
-    expect(normalizeElementText("character", "á¹¢áº¹Ìgun")).toBe("á¹¢áº¸ÌGUN");
-    expect(normalizeElementText("character", "Ã€dÃ¹nnÃ¬")).toBe("Ã€DÃ™NNÃŒ");
-    expect(normalizeElementText("character", "OlÃºwatÃ³bilá»Ìba")).toBe("OLÃšWATÃ“BILá»ŒÌBA");
+    expect(normalizeElementText("character", "Ṣẹ́gun")).toBe("ṢẸ́GUN");
+    expect(normalizeElementText("character", "Àdùnnì")).toBe("ÀDÙNNÌ");
+    expect(normalizeElementText("character", "Olúwatóbilọ́ba")).toBe("OLÚWATÓBILỌ́BA");
   });
 });
 
@@ -162,9 +161,15 @@ describe("Action typing and character commit points", () => {
 });
 
 describe("structured Fountain round trip", () => {
+  it("preserves multiple and custom character extensions as structured metadata", () => {
+    const source = { preamble: "", elements: [createElement("character", "TOBIAS (V.O.) (ON RADIO)"), createElement("dialogue", "Testing.")] };
+    const reopened = parseFountain(serializeFountain(source));
+    expect(reopened.elements[0].text).toBe("TOBIAS (V.O.) (ON RADIO)");
+    expect(reopened.elements[0].metadata).toMatchObject({ characterName: "TOBIAS", characterExtensions: ["V.O.", "ON RADIO"] });
+  });
   it("preserves element types and text across save and reopen", () => {
     const original = {
-      preamble: "Title: Ã€dÃ¹nnÃ¬\nAuthor: á¹¢áº¹Ìgun",
+      preamble: "Title: Àdùnnì\nAuthor: Ṣẹ́gun",
       elements: [
         createElement("scene-heading", "int. reception centre - night", { sceneNumber: "12" }),
         createElement("action", "Daniel stands over the locked drawer."),
@@ -187,4 +192,3 @@ describe("structured Fountain round trip", () => {
     expect(parseFountain(fountain).elements[0]).toMatchObject({ type: "action", text: "NO ENTRY" });
   });
 });
-
