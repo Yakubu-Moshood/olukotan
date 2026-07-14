@@ -55,4 +55,31 @@ describe("screenplay exporters", () => {
     expect(pdf).toContain("UNCLE TUNDE \\(CONT'D\\)");
     expect(docx).toContain(`<w:t xml:space="preserve">${cue}</w:t>`);
   });
+
+  it("preserves semantic right-aligned transitions across every structured export", async () => {
+    const document = synchroniseSceneMetadata({ preamble: "", elements: [createElement("transition", "CUT TO:")] }, defaultProjectData());
+    const transitionOptions = { ...options, includeTitlePage: false, includeSceneNumbers: false, includePageNumbers: false };
+    const context = { project, document: document.document, projectData: document.projectData, options: transitionOptions };
+    const fountain = String((await exportScreenplay("fountain", context)).data);
+    const fdx = String((await exportScreenplay("fdx", context)).data);
+    const html = String((await exportScreenplay("html", context)).data);
+    const rtf = String((await exportScreenplay("rtf", context)).data);
+    const docx = new TextDecoder().decode((await exportScreenplay("docx", context)).data as Uint8Array);
+    const pdf = new TextDecoder().decode((await exportScreenplay("pdf", context)).data as Uint8Array);
+    expect(fountain).toBe(">CUT TO:\n");
+    expect(fdx).toContain('<Paragraph Type="Transition"><Text>CUT TO:</Text></Paragraph>');
+    expect(html).toContain('<div class="transition">CUT TO:</div>');
+    expect(html).toContain(".transition{text-align:right}");
+    expect(rtf).toContain("\\pard\\qr");
+    expect(docx).toContain('<w:jc w:val="right"/>');
+    const a4X = Number(pdf.match(/BT \/F1 11 Tf ([\d.]+) [\d.]+ Td \(CUT TO:\) Tj ET/u)?.[1]);
+    expect(a4X + "CUT TO:".length * 6.6).toBeCloseTo(523, 5);
+    expect(pdf).toContain("/MediaBox [0 0 595 842]");
+
+    const letterData = defaultProjectData(); letterData.screenplaySettings.pagination.pageSize = "US Letter";
+    const letter = new TextDecoder().decode((await exportScreenplay("pdf", { ...context, projectData: letterData })).data as Uint8Array);
+    const letterX = Number(letter.match(/BT \/F1 11 Tf ([\d.]+) [\d.]+ Td \(CUT TO:\) Tj ET/u)?.[1]);
+    expect(letterX + "CUT TO:".length * 6.6).toBeCloseTo(540, 5);
+    expect(letter).toContain("/MediaBox [0 0 612 792]");
+  });
 });

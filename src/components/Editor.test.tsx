@@ -96,6 +96,25 @@ describe("structured screenplay editor integration", () => {
     expect(nextScene).toHaveValue("EXT. EMPTY ROAD - DAWN");
   });
 
+  it("keeps common transitions semantic, single-line, and isolated from other element geometry", () => {
+    setup();
+    const scene = screen.getByLabelText("Scene Heading element 1") as HTMLTextAreaElement;
+    fireEvent.change(scene, { target: { value: "INT. GOAL POST - NIGHT", selectionStart: 22 } }); fireEvent.keyDown(scene, { key: "Enter" });
+    const action = screen.getByLabelText("Action element 2") as HTMLTextAreaElement;
+    fireEvent.keyDown(action, { key: "6", ctrlKey: true });
+    const transition = screen.getByLabelText("Transition element 2") as HTMLTextAreaElement;
+    for (const value of ["cut to:", "smash cut to:", "match cut to:", "dissolve to:", "fade out.", "fade to black."]) {
+      fireEvent.change(transition, { target: { value, selectionStart: value.length } });
+      expect(transition.value).toBe(value.toLocaleUpperCase("en-GB"));
+      expect(transition.value).not.toMatch(/^\s/u);
+      expect(transition.value).not.toContain("\n");
+      expect(transition.closest(".screenplay-transition")).toBeInTheDocument();
+      expect(transition.closest(".screenplay-character, .screenplay-dialogue")).toBeNull();
+    }
+    fireEvent.keyDown(transition, { key: "Enter" });
+    expect(screen.getByLabelText("Scene Heading element 3").closest(".screenplay-scene-heading")).toBeInTheDocument();
+  });
+
   it("undo restores an element transition exactly", () => {
     setup();
     const scene = screen.getByLabelText("Scene Heading element 1") as HTMLTextAreaElement;
