@@ -1,3 +1,4 @@
+
 export type ProjectType =
   | "feature-film" | "short-film" | "television-pilot" | "television-episode"
   | "limited-series" | "stage-play" | "audio-drama" | "commercial"
@@ -27,6 +28,7 @@ export interface ProjectManifest {
 export type ScreenplayPreset = "spec-script" | "shooting-script" | "uk-screenplay" | "us-screenplay" | "custom";
 export type SceneNumberingMode = "automatic" | "manual" | "locked";
 export type SceneNumberPosition = "left" | "right" | "both";
+export type ExportFormat = "pdf" | "fdx" | "docx" | "rtf" | "fountain" | "txt" | "md" | "html";
 
 export interface ScreenplaySettings {
   preset: ScreenplayPreset;
@@ -37,6 +39,7 @@ export interface ScreenplaySettings {
     showInEditor: boolean;
     showInExport: boolean;
     showInPrint: boolean;
+    startAt: number;
   };
   pageNumbers: {
     enabled: boolean;
@@ -44,6 +47,7 @@ export interface ScreenplaySettings {
     startOnPage: 1 | 2 | "custom";
     customStartPage: number;
     firstVisibleNumber: number;
+    hideOnFirstPage: boolean;
   };
   continueds: {
     character: "automatic" | "manual" | "off";
@@ -66,6 +70,15 @@ export interface ScreenplaySettings {
     pageSize: "A4" | "US Letter";
     viewMode: "page" | "continuous";
   };
+  exportDefaults: {
+    format: ExportFormat;
+    includeTitlePage: boolean;
+    includeSceneNumbers: boolean;
+    includePageNumbers: boolean;
+    includeScriptNotes: boolean;
+    includeRevisionMarks: boolean;
+    includeOmittedScenes: boolean;
+  };
 }
 
 export interface SceneMetadata {
@@ -87,19 +100,21 @@ export interface ProjectData {
   schemaVersion: 1;
   screenplaySettings: ScreenplaySettings;
   scenes: SceneMetadata[];
+  productionSnapshots: { createdAt: string; reason: string; screenplay: string }[];
 }
 
 export const defaultScreenplaySettings = (): ScreenplaySettings => ({
   preset: "spec-script",
-  sceneNumbers: { enabled: false, mode: "automatic", position: "both", showInEditor: true, showInExport: true, showInPrint: true },
-  pageNumbers: { enabled: true, position: "top-right", startOnPage: 2, customStartPage: 1, firstVisibleNumber: 1 },
+  sceneNumbers: { enabled: false, mode: "automatic", position: "both", showInEditor: true, showInExport: true, showInPrint: true, startAt: 1 },
+  pageNumbers: { enabled: true, position: "top-right", startOnPage: 2, customStartPage: 1, firstVisibleNumber: 1, hideOnFirstPage: true },
   continueds: { character: "automatic", dialogueMore: true, dialogueContinued: true, sceneContinued: "off" },
   capitalisation: { sceneHeadings: true, characters: true, transitions: true, shots: true },
   revisions: { enabled: false, activeSetId: null, showMarks: true },
   pagination: { pageSize: "A4", viewMode: "page" },
+  exportDefaults: { format: "pdf", includeTitlePage: true, includeSceneNumbers: true, includePageNumbers: true, includeScriptNotes: false, includeRevisionMarks: false, includeOmittedScenes: false },
 });
 
-export const defaultProjectData = (): ProjectData => ({ schemaVersion: 1, screenplaySettings: defaultScreenplaySettings(), scenes: [] });
+export const defaultProjectData = (): ProjectData => ({ schemaVersion: 1, screenplaySettings: defaultScreenplaySettings(), scenes: [], productionSnapshots: [] });
 
 export function migrateProjectData(value?: Partial<ProjectData>): ProjectData {
   const defaults = defaultProjectData();
@@ -107,6 +122,7 @@ export function migrateProjectData(value?: Partial<ProjectData>): ProjectData {
   return {
     schemaVersion: 1,
     scenes: Array.isArray(value?.scenes) ? value.scenes : [],
+    productionSnapshots: Array.isArray(value?.productionSnapshots) ? value.productionSnapshots : [],
     screenplaySettings: {
       ...defaults.screenplaySettings, ...settings,
       sceneNumbers: { ...defaults.screenplaySettings.sceneNumbers, ...settings?.sceneNumbers },
@@ -115,6 +131,7 @@ export function migrateProjectData(value?: Partial<ProjectData>): ProjectData {
       capitalisation: { ...defaults.screenplaySettings.capitalisation, ...settings?.capitalisation },
       revisions: { ...defaults.screenplaySettings.revisions, ...settings?.revisions },
       pagination: { ...defaults.screenplaySettings.pagination, ...settings?.pagination },
+      exportDefaults: { ...defaults.screenplaySettings.exportDefaults, ...settings?.exportDefaults },
     },
   };
 }
@@ -158,3 +175,4 @@ export interface AppSettings {
   googleClientId: string;
   driveSyncEnabled: boolean;
 }
+

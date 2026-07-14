@@ -1,6 +1,7 @@
+
 import type { ProjectData, SceneMetadata, ScreenplaySettings } from "../types";
 import { migrateProjectData } from "../types";
-import { parseCharacter, type ScreenplayDocument, type ScreenplayElement } from "./screenplay-elements";
+import { parseCharacter, serializeFountain, type ScreenplayDocument, type ScreenplayElement } from "./screenplay-elements";
 
 export type AutocompleteContext = "none" | "character" | "scene-prefix" | "scene-location" | "scene-time" | "transition" | "shot";
 
@@ -47,7 +48,22 @@ export function synchroniseSceneMetadata(document: ScreenplayDocument, input?: P
   });
 
   if (projectData.screenplaySettings.sceneNumbers.mode === "automatic") {
-    scenes.forEach((scene, index) => { scene.number = String(index + 1); scene.locked = false; });
+    const startAt = Math.max(1, projectData.screenplaySettings.sceneNumbers.startAt || 1);
+    scenes.forEach((scene, index) => { scene.number = String(startAt + index); scene.locked = false; });
+  } else if (projectData.screenplaySettings.sceneNumbers.mode === "locked") {
+    scenes.forEach((scene, index) => {
+      if (scene.number) { scene.locked = true; return; }
+      const previous = scenes[index - 1]?.number;
+      const next = scenes[index + 1]?.number;
+      if (!previous && next && /^\d+$/u.test(next)) scene.number = `${Math.max(0, Number(next) - 1)}A`;
+      else if (previous) {
+        const base = previous.match(/^\d+/u)?.[0] ?? previous;
+        const used = new Set(scenes.map((value) => value.number).filter(Boolean));
+        let code = 65; while (used.has(`${base}${String.fromCharCode(code)}`)) code++;
+        scene.number = `${base}${String.fromCharCode(code)}`;
+      } else scene.number = String(index + 1);
+      scene.locked = true;
+    });
   }
   const numberedElements = elements.map((element) => {
     if (element.type !== "scene-heading") return element;
@@ -55,6 +71,14 @@ export function synchroniseSceneMetadata(document: ScreenplayDocument, input?: P
     return { ...element, metadata: { ...element.metadata, sceneNumber: scene?.number } };
   });
   return { document: { ...document, elements: numberedElements }, projectData: { ...projectData, scenes } };
+}
+
+export function removeSceneNumbers(document: ScreenplayDocument, input: ProjectData) {
+  const data = migrateProjectData(input);
+  data.productionSnapshots.push({ createdAt: new Date().toISOString(), reason: "Before removing scene numbers", screenplay: serializeFountain(document) });
+  data.screenplaySettings.sceneNumbers = { ...data.screenplaySettings.sceneNumbers, enabled: false, mode: "manual" };
+  data.scenes = data.scenes.map((scene) => ({ ...scene, number: undefined, locked: false, numberingMode: "manual" }));
+  return { document: { ...document, elements: document.elements.map((element) => element.type === "scene-heading" ? { ...element, metadata: { ...element.metadata, sceneNumber: undefined } } : element) }, projectData: data };
 }
 
 export function displaySceneNumber(element: ScreenplayElement, projectData: ProjectData) {
@@ -91,3 +115,4 @@ export function autocompleteSuggestions(
     .map((value) => ({ value, type: "scene-heading" as const, category: "Scene Headings" }));
   return [];
 }
+

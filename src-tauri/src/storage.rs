@@ -12,14 +12,16 @@ fn default_project_data() -> serde_json::Value {
         "schemaVersion": 1,
         "screenplaySettings": {
             "preset": "spec-script",
-            "sceneNumbers": { "enabled": false, "mode": "automatic", "position": "both", "showInEditor": true, "showInExport": true, "showInPrint": true },
-            "pageNumbers": { "enabled": true, "position": "top-right", "startOnPage": 2, "customStartPage": 1, "firstVisibleNumber": 1 },
+            "sceneNumbers": { "enabled": false, "mode": "automatic", "position": "both", "startAt": 1, "showInEditor": true, "showInExport": true, "showInPrint": true },
+            "pageNumbers": { "enabled": true, "position": "top-right", "startOnPage": 2, "customStartPage": 1, "firstVisibleNumber": 1, "hideOnFirstPage": true },
             "continueds": { "character": "automatic", "dialogueMore": true, "dialogueContinued": true, "sceneContinued": "off" },
             "capitalisation": { "sceneHeadings": true, "characters": true, "transitions": true, "shots": true },
             "revisions": { "enabled": false, "activeSetId": null, "showMarks": true },
-            "pagination": { "pageSize": "A4", "viewMode": "page" }
+            "pagination": { "pageSize": "A4", "viewMode": "page" },
+            "exportDefaults": { "format": "pdf", "includeTitlePage": true, "includeSceneNumbers": true, "includePageNumbers": true, "includeScriptNotes": false, "includeRevisionMarks": false, "includeOmittedScenes": false }
         },
-        "scenes": []
+        "scenes": [],
+        "productionSnapshots": []
     })
 }
 
@@ -156,6 +158,15 @@ pub fn discard_recovery(root: &Path) -> AppResult<()> {
     let path = root.join("recovery").join("unsaved.fountain");
     if path.exists() { fs::remove_file(path)?; }
     Ok(())
+}
+
+pub fn record_export(root: &Path, entry: serde_json::Value) -> AppResult<()> {
+    let manifest_path = root.join(MANIFEST);
+    let mut manifest: ProjectManifest = serde_json::from_str(&fs::read_to_string(&manifest_path)?)?;
+    validate_manifest(&manifest)?;
+    manifest.export_history.push(entry);
+    manifest.updated_at = Utc::now().to_rfc3339();
+    atomic_write(&manifest_path, serde_json::to_string_pretty(&manifest)?.as_bytes())
 }
 
 pub fn path(value: String) -> PathBuf { PathBuf::from(value) }

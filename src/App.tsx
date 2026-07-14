@@ -101,6 +101,7 @@ export default function App() {
   if (project) return <Editor project={project} content={content} dirty={dirty} saving={saving} message={message}
     onChange={(value) => { setContent(value); setDirty(true); setMessage(""); }} onSave={() => void save()}
     onProjectDataChange={(value) => { projectDataRef.current = value; setProject((current) => current ? { ...current, projectData: value } : current); setDirty(true); setMessage(""); }}
+    onExported={(entry) => { setProject((current) => current ? { ...current, manifest: { ...current.manifest, exportHistory: [...current.manifest.exportHistory, entry] } } : current); void platform.recordExport(project.projectPath, entry); setMessage(`Exported ${entry.format.toUpperCase()}`); }}
     onHome={() => { if (!dirty || window.confirm("Leave the editor? Your recovery copy will remain available.")) { setProject(null); void refresh(); } }}
     onReveal={() => void platform.reveal(project.projectPath)} />;
 

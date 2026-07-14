@@ -1,15 +1,17 @@
+
 import { ArrowLeft, Bold, ChevronLeft, ChevronRight, Cloud, Command, FileText, FolderOpen, Italic, PanelLeftClose, PanelRightClose, Redo2, Save, Search, Settings, Underline, Undo2, WifiOff } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { approximatePageCount, wordCount } from "../lib/screenplay";
-import { automaticContinued, autocompleteSuggestions, displaySceneNumber, getAutocompleteContext, synchroniseSceneMetadata } from "../lib/screenplay-production";
+import { automaticContinued, autocompleteSuggestions, displaySceneNumber, getAutocompleteContext, removeSceneNumbers, synchroniseSceneMetadata } from "../lib/screenplay-production";
 import {
   ELEMENT_LABELS, SCENE_PREFIXES, TIMES_OF_DAY, applyEnter, applyTab, collectKnownCharacters,
   collectSceneLocations, createElement, normalizeElementText, normalizedCursorPosition, parseCharacter,
   parseFountain, screenplayPasteElements, serializeFountain, updateElementText,
   type EditResult, type ScreenplayDocument, type ScreenplayElement, type ScreenplayElementType,
 } from "../lib/screenplay-elements";
-import { migrateProjectData, type ProjectData, type ProjectPayload, type ScreenplaySettings } from "../types";
+import { migrateProjectData, type ExportFormat, type ProjectData, type ProjectPayload, type ScreenplaySettings } from "../types";
 import { ScreenplaySettingsDialog } from "./ScreenplaySettingsDialog";
+import { ExportDialog } from "./ExportDialog";
 
 const SELECTABLE_TYPES: ScreenplayElementType[] = ["scene-heading", "action", "character", "parenthetical", "dialogue", "transition", "shot", "general"];
 const SHORTCUT_TYPES: Record<string, ScreenplayElementType> = { "1": "scene-heading", "2": "action", "3": "character", "4": "parenthetical", "5": "dialogue", "6": "transition", "7": "shot", "0": "general" };
@@ -19,9 +21,10 @@ interface FocusRequest { index: number; cursor: number }
 
 function cloneDocument(value: ScreenplayDocument): ScreenplayDocument { return structuredClone(value); }
 
-export function Editor({ project, content, dirty, saving, message, onChange, onProjectDataChange, onSave, onHome, onReveal }: {
+export function Editor({ project, content, dirty, saving, message, onChange, onProjectDataChange, onSave, onHome, onReveal, onExported }: {
   project: ProjectPayload; content: string; dirty: boolean; saving: boolean; message: string;
   onChange(value: string): void; onProjectDataChange(value: ProjectData): void; onSave(): void; onHome(): void; onReveal(): void;
+  onExported(entry: { format: ExportFormat; path: string; exportedAt: string }): void;
 }) {
   const initial = useRef<ReturnType<typeof synchroniseSceneMetadata> | null>(null);
   if (!initial.current) initial.current = synchroniseSceneMetadata(parseFountain(content), migrateProjectData(project.projectData));
@@ -30,6 +33,9 @@ export function Editor({ project, content, dirty, saving, message, onChange, onP
   const [activeIndex, setActiveIndex] = useState(0);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [screenplaySettingsOpen, setScreenplaySettingsOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [fileMenuOpen, setFileMenuOpen] = useState(false);
+  const [productionMenuOpen, setProductionMenuOpen] = useState(false);
   const [suggestionIndex, setSuggestionIndex] = useState(-1);
   const [autocompleteOpen, setAutocompleteOpen] = useState(true);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
@@ -204,22 +210,32 @@ export function Editor({ project, content, dirty, saving, message, onChange, onP
   };
 
   const activeScene = [...document.elements.slice(0, activeIndex + 1)].reverse().find((element) => element.type === "scene-heading");
+  const sceneNumberFor = (element: ScreenplayElement) => projectData.scenes.find((scene) => scene.sceneId === element.metadata?.sceneId)?.number;
+  const numberingStart = () => { const raw = window.prompt("Start scene numbering at:", String(projectData.screenplaySettings.sceneNumbers.startAt || 1)); if (raw === null) return undefined; const value = Number(raw); if (!Number.isInteger(value) || value < 1) { window.alert("Enter a whole number of 1 or greater."); return undefined; } return value; };
+  const numberScenes = () => { const startAt = numberingStart(); if (!startAt) return; const settings = { ...projectData.screenplaySettings, sceneNumbers: { ...projectData.screenplaySettings.sceneNumbers, enabled: true, mode: "automatic" as const, startAt } }; commitDocument(document, { index: activeIndex, cursor: active?.text.length ?? 0 }, true, { ...projectData, screenplaySettings: settings }); setProductionMenuOpen(false); };
+  const removeNumbers = () => { if (!window.confirm("Remove scene numbers from this screenplay?")) return; const removed = removeSceneNumbers(document, projectData); commitDocument(removed.document, { index: activeIndex, cursor: active?.text.length ?? 0 }, true, removed.projectData); setProductionMenuOpen(false); };
+  const renumberScenes = () => { if (projectData.screenplaySettings.sceneNumbers.mode === "locked" && !window.confirm("Scene numbers are locked. Renumbering will replace production references. Continue?")) return; numberScenes(); };
+  const lockSceneNumbers = () => { const numbered = synchroniseSceneMetadata(document, { ...projectData, screenplaySettings: { ...projectData.screenplaySettings, sceneNumbers: { ...projectData.screenplaySettings.sceneNumbers, enabled: true, mode: "automatic" } } }); const locked = { ...numbered.projectData, screenplaySettings: { ...numbered.projectData.screenplaySettings, sceneNumbers: { ...numbered.projectData.screenplaySettings.sceneNumbers, mode: "locked" as const } }, scenes: numbered.projectData.scenes.map((scene) => ({ ...scene, locked: true, numberingMode: "locked" as const })) }; commitDocument(numbered.document, { index: activeIndex, cursor: active?.text.length ?? 0 }, true, locked); setProductionMenuOpen(false); };
+  const unlockSceneNumbers = () => { if (!window.confirm("Unlocking scene numbers may allow later renumbering to change existing production references. Continue?")) return; const data = { ...projectData, screenplaySettings: { ...projectData.screenplaySettings, sceneNumbers: { ...projectData.screenplaySettings.sceneNumbers, mode: "manual" as const } }, scenes: projectData.scenes.map((scene) => ({ ...scene, locked: false, numberingMode: "manual" as const })) }; commitDocument(document, { index: activeIndex, cursor: active?.text.length ?? 0 }, true, data); setProductionMenuOpen(false); };
+  const setCurrentSceneNumber = () => { if (!activeScene) return; const requested = window.prompt("Set scene number:", sceneNumberFor(activeScene) ?? ""); if (requested === null) return; const value = requested.trim().toLocaleUpperCase("en-GB"); if (!/^\d+[A-Z]*$/u.test(value)) { window.alert("Use a number with an optional letter suffix, such as 14A."); return; } if (projectData.scenes.some((scene) => scene.sceneId !== activeScene.metadata?.sceneId && scene.number === value)) { window.alert(`Scene number ${value} is already in use.`); return; } const data = { ...projectData, screenplaySettings: { ...projectData.screenplaySettings, sceneNumbers: { ...projectData.screenplaySettings.sceneNumbers, enabled: true, mode: "manual" as const } }, scenes: projectData.scenes.map((scene) => scene.sceneId === activeScene.metadata?.sceneId ? { ...scene, number: value, locked: false, numberingMode: "manual" as const } : scene) }; commitDocument(document, { index: activeIndex, cursor: active?.text.length ?? 0 }, true, data); setProductionMenuOpen(false); };
   const activeSceneNumber = activeScene ? displaySceneNumber(activeScene, projectData) : undefined;
 
   return <div className="studio" onClick={() => contextMenu && setContextMenu(null)}>
     <header className="app-bar"><div className="app-left"><button className="icon-button" onClick={onHome} aria-label="Back to home"><ArrowLeft size={19}/></button><span className="mini-wordmark">OLUKOTAN</span><span className="divider"/><div><strong>{project.manifest.title}</strong><small>{dirty ? "Unsaved changes" : message || "Saved locally"}</small></div></div>
-      <div className="app-actions"><span className="offline"><WifiOff size={15}/> Offline</span><button className="secondary compact" onClick={onSave} disabled={!dirty || saving || project.readOnly}><Save size={16}/>{saving ? "Saving…" : "Save"}</button><button className="icon-button" aria-label="Screenplay settings" onClick={() => setScreenplaySettingsOpen(true)}><Settings size={19}/></button></div>
+      <div className="app-actions"><span className="offline"><WifiOff size={15}/> Offline</span><button className="secondary compact" onClick={onSave} disabled={!dirty || saving || project.readOnly}><Save size={16}/>{saving ? "Savingâ€¦" : "Save"}</button><button className="icon-button" aria-label="Screenplay settings" onClick={() => setScreenplaySettingsOpen(true)}><Settings size={19}/></button></div>
     </header>
     <aside className="left-sidebar"><div className="panel-heading"><span>Scenes</span><button className="icon-button" aria-label="Collapse scene navigator"><PanelLeftClose size={17}/></button></div><div className="scene-search"><Search size={15}/><input placeholder="Search scenes" aria-label="Search scenes"/></div>
       <nav className="scene-list" aria-label="Scene navigator">{scenes.length ? scenes.map(({ element, index }) => <button key={element.metadata?.sceneId ?? element.id} onClick={() => { setActiveIndex(index); focusRequest.current = { index, cursor: 0 }; setDocument({ ...document }); }}><span>{displaySceneNumber(element, projectData) ?? ""}</span><strong>{element.text}</strong></button>) : <p>Your scene headings will appear here.<br/><br/>Start typing: <strong>INT.</strong></p>}</nav>
-      <button className="folder-link" onClick={onReveal}><FolderOpen size={16}/> {project.projectPath.startsWith("browser://") ? "Export Fountain file" : "Open project folder"}</button>
+      <button className="folder-link" onClick={() => project.projectPath.startsWith("browser://") ? setExportOpen(true) : onReveal()}><FolderOpen size={16}/> {project.projectPath.startsWith("browser://") ? "Export screenplayâ€¦" : "Open project folder"}</button>
     </aside>
     <main className="writing-area"><div className="editor-toolbar">
+      <div className="menu-control"><button onClick={() => { setFileMenuOpen((open) => !open); setProductionMenuOpen(false); }}>File</button>{fileMenuOpen && <div className="app-menu" role="menu"><button role="menuitem" onClick={() => { setExportOpen(true); setFileMenuOpen(false); }}>Exportâ€¦</button><button role="menuitem" onClick={() => { setExportOpen(true); setFileMenuOpen(false); }}>Export Asâ€¦</button><button role="menuitem" onClick={() => { setExportOpen(true); setFileMenuOpen(false); }}>Save Copy Asâ€¦</button></div>}</div>
+      <div className="menu-control"><button onClick={() => { setProductionMenuOpen((open) => !open); setFileMenuOpen(false); }}>Production</button>{productionMenuOpen && <div className="app-menu" role="menu"><button role="menuitem" disabled={!scenes.length} onClick={numberScenes}>Number Scenesâ€¦</button><button role="menuitem" disabled={!projectData.scenes.some((scene) => scene.number)} onClick={removeNumbers}>Remove Scene Numbersâ€¦</button><button role="menuitem" disabled={!scenes.length} onClick={renumberScenes}>Renumber Scenesâ€¦</button><button role="menuitem" disabled={!projectData.scenes.some((scene) => scene.number) || projectData.screenplaySettings.sceneNumbers.mode === "locked"} onClick={lockSceneNumbers}>Lock Scene Numbers</button><button role="menuitem" disabled={projectData.screenplaySettings.sceneNumbers.mode !== "locked"} onClick={unlockSceneNumbers}>Unlock Scene Numbers</button><button role="menuitem" disabled={!activeScene} onClick={setCurrentSceneNumber}>Set Current Scene Numberâ€¦</button></div>}</div>
       <select aria-label="Screenplay element" value={active?.type ?? "action"} onChange={(event) => changeType(event.target.value as ScreenplayElementType)}>{SELECTABLE_TYPES.map((type) => <option key={type} value={type}>{ELEMENT_LABELS[type]}</option>)}</select>
       <button className="icon-button" aria-label="Bold" onClick={() => wrapSelection("**")}><Bold size={16}/></button><button className="icon-button" aria-label="Italic" onClick={() => wrapSelection("*")}><Italic size={16}/></button><button className="icon-button" aria-label="Underline" onClick={() => wrapSelection("_")}><Underline size={16}/></button>
       <button className="icon-button" aria-label="Undo" onClick={undo} disabled={!history.current.past.length}><Undo2 size={16}/></button><button className="icon-button" aria-label="Redo" onClick={redo} disabled={!history.current.future.length}><Redo2 size={16}/></button><button className="icon-button" aria-label="Command palette" onClick={() => setPaletteOpen(true)}><Command size={16}/></button>
       <span/><button className="icon-button" aria-label="Previous page"><ChevronLeft size={17}/></button><strong>Page 1 of ~{pages}</strong><button className="icon-button" aria-label="Next page"><ChevronRight size={17}/></button></div>
-      {project.readOnly && <div className="read-only">Read-only mode — this folder cannot be written to. Your original files are unchanged.</div>}
+      {project.readOnly && <div className="read-only">Read-only mode â€” this folder cannot be written to. Your original files are unchanged.</div>}
       <div className="page-wrap"><div className="paper screenplay-paper" role="textbox" aria-label="Screenplay editor" aria-multiline="true">
         {document.elements.map((element, index) => <div className={`screenplay-block screenplay-${element.type} ${index === activeIndex ? "is-active" : ""}`} key={element.id} data-element-type={element.type}>
           {element.type === "scene-heading" && displaySceneNumber(element, projectData) && projectData.screenplaySettings.sceneNumbers.showInEditor && ["left", "both"].includes(projectData.screenplaySettings.sceneNumbers.position) && (projectData.screenplaySettings.sceneNumbers.mode === "manual" ? <input className="scene-number-input scene-number-left" aria-label={`Scene number ${index + 1}`} value={displaySceneNumber(element, projectData)} onFocus={() => setActiveIndex(index)} onChange={(event) => updateSceneNumber(index, event.target.value.replace(/#/g, ""))}/> : <span className="scene-number-gutter scene-number-left">{displaySceneNumber(element, projectData)}</span>)}
@@ -236,12 +252,14 @@ export function Editor({ project, content, dirty, saving, message, onChange, onP
         </div>)}
       </div></div>
     </main>
-    <aside className="right-sidebar"><div className="panel-heading"><span>Project</span><button className="icon-button" aria-label="Collapse project inspector"><PanelRightClose size={17}/></button></div><div className="inspector-section"><p className="eyebrow">Document</p><h3><FileText size={17}/> Screenplay</h3><dl><div><dt>Active element</dt><dd>{active ? ELEMENT_LABELS[active.type] : "—"}</dd></div><div><dt>Format</dt><dd>Structured Fountain</dd></div><div><dt>Page size</dt><dd>{project.manifest.pageSize}</dd></div><div><dt>Scenes</dt><dd>{scenes.length}</dd></div><div><dt>Words</dt><dd>{wordCount(fountain).toLocaleString()}</dd></div></dl><p className="pagination-note">Page count is approximate while exact font-metric pagination is under development.</p></div>
+    <aside className="right-sidebar"><div className="panel-heading"><span>Project</span><button className="icon-button" aria-label="Collapse project inspector"><PanelRightClose size={17}/></button></div><div className="inspector-section"><p className="eyebrow">Document</p><h3><FileText size={17}/> Screenplay</h3><dl><div><dt>Active element</dt><dd>{active ? ELEMENT_LABELS[active.type] : "â€”"}</dd></div><div><dt>Format</dt><dd>Structured Fountain</dd></div><div><dt>Page size</dt><dd>{project.manifest.pageSize}</dd></div><div><dt>Scenes</dt><dd>{scenes.length}</dd></div><div><dt>Words</dt><dd>{wordCount(fountain).toLocaleString()}</dd></div></dl><p className="pagination-note">Page count is approximate while exact font-metric pagination is under development.</p></div>
       <div className="ownership-note"><Cloud size={19}/><strong>Stored on your device</strong><p>{project.projectPath}</p></div>
     </aside>
-    <footer className="status-bar"><span>{message || (dirty ? "Editing" : "All changes saved")}</span><span>{activeSceneNumber ? `Scene ${activeSceneNumber} · ` : ""}{active ? ELEMENT_LABELS[active.type] : ""} · {wordCount(fountain).toLocaleString()} words · ~{pages} {pages === 1 ? "page" : "pages"} · UTF-8</span></footer>
-    {contextMenu && <div className="element-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} role="menu" onClick={(event) => event.stopPropagation()}>{SELECTABLE_TYPES.map((type) => <button role="menuitem" key={type} onClick={() => changeType(type)}>{ELEMENT_LABELS[type]} <kbd>Ctrl+{Object.entries(SHORTCUT_TYPES).find(([, value]) => value === type)?.[0] ?? ""}</kbd></button>)}</div>}
+    <footer className="status-bar"><span>{message || (dirty ? "Editing" : "All changes saved")}</span><span>{activeSceneNumber ? `Scene ${activeSceneNumber} Â· ` : ""}{active ? ELEMENT_LABELS[active.type] : ""} Â· {wordCount(fountain).toLocaleString()} words Â· ~{pages} {pages === 1 ? "page" : "pages"} Â· UTF-8</span></footer>
+    {contextMenu && <div className="element-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} role="menu" onClick={(event) => event.stopPropagation()}>{active?.type === "scene-heading" && <button role="menuitem" onClick={setCurrentSceneNumber}>Set Scene Numberâ€¦</button>}{SELECTABLE_TYPES.map((type) => <button role="menuitem" key={type} onClick={() => changeType(type)}>{ELEMENT_LABELS[type]} <kbd>Ctrl+{Object.entries(SHORTCUT_TYPES).find(([, value]) => value === type)?.[0] ?? ""}</kbd></button>)}</div>}
     {paletteOpen && <div className="command-palette-backdrop" onMouseDown={() => setPaletteOpen(false)}><div className="command-palette" role="dialog" aria-label="Element command palette" onMouseDown={(event) => event.stopPropagation()}><h2>Change screenplay element</h2>{SELECTABLE_TYPES.map((type) => <button key={type} onClick={() => changeType(type)}><span>{ELEMENT_LABELS[type]}</span><kbd>Ctrl+{Object.entries(SHORTCUT_TYPES).find(([, value]) => value === type)?.[0] ?? ""}</kbd></button>)}</div></div>}
     {screenplaySettingsOpen && <ScreenplaySettingsDialog initial={projectData.screenplaySettings} onClose={() => setScreenplaySettingsOpen(false)} onSave={saveScreenplaySettings}/>} 
+    {exportOpen && <ExportDialog project={project} document={document} projectData={projectData} onClose={() => setExportOpen(false)} onExported={onExported}/>} 
   </div>;
 }
+

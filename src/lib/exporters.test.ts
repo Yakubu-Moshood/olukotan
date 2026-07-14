@@ -1,0 +1,32 @@
+
+import { describe, expect, it } from "vitest";
+import { defaultProjectData, type ExportFormat, type ProjectPayload } from "../types";
+import { createElement } from "./screenplay-elements";
+import { synchroniseSceneMetadata } from "./screenplay-production";
+import { exportScreenplay } from "./exporters";
+
+const formats: ExportFormat[] = ["pdf", "fdx", "docx", "rtf", "fountain", "txt", "md", "html"];
+const project = { manifest: { title: "Night Market", author: "A. Writer" } } as ProjectPayload;
+const prepared = synchroniseSceneMetadata({ preamble: "Title: Night Market\nAuthor: A. Writer", elements: [
+  createElement("scene-heading", "EXT. MARKET - NIGHT"), createElement("action", "Rain falls."),
+  createElement("character", "DEJI"), createElement("dialogue", "We begin."),
+] }, defaultProjectData());
+const options = { includeTitlePage: true, includeSceneNumbers: true, includePageNumbers: true, includeScriptNotes: false, includeRevisionMarks: false, includeOmittedScenes: false };
+
+describe("screenplay exporters", () => {
+  it.each(formats)("exports a non-empty %s file from the structured document", async (format) => {
+    const output = await exportScreenplay(format, { project, document: prepared.document, projectData: prepared.projectData, options });
+    expect(output.format).toBe(format);
+    expect(output.extension.length).toBeGreaterThan(1);
+    expect(typeof output.data === "string" ? output.data.length : output.data.byteLength).toBeGreaterThan(20);
+  });
+
+  it("writes recognizable PDF, DOCX, FDX, and semantic HTML structures", async () => {
+    const context = { project, document: prepared.document, projectData: prepared.projectData, options };
+    const pdf = await exportScreenplay("pdf", context); expect(new TextDecoder().decode(pdf.data as Uint8Array).startsWith("%PDF-1.4")).toBe(true);
+    const docx = await exportScreenplay("docx", context); expect([...((docx.data as Uint8Array).slice(0, 2))]).toEqual([80, 75]);
+    const fdx = await exportScreenplay("fdx", context); expect(fdx.data).toContain('<Paragraph Type="Scene Heading" Number="1"');
+    const html = await exportScreenplay("html", context); expect(html.data).toContain('class="scene-heading"');
+  });
+});
+

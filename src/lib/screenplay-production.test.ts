@@ -1,7 +1,8 @@
+
 import { describe, expect, it } from "vitest";
 import { defaultProjectData, migrateProjectData } from "../types";
 import { createElement, parseFountain, serializeFountain } from "./screenplay-elements";
-import { automaticContinued, autocompleteSuggestions, getAutocompleteContext, synchroniseSceneMetadata } from "./screenplay-production";
+import { automaticContinued, autocompleteSuggestions, getAutocompleteContext, removeSceneNumbers, synchroniseSceneMetadata } from "./screenplay-production";
 
 describe("production scene metadata", () => {
   it("assigns automatic numbers in script order and renumbers after a move", () => {
@@ -33,6 +34,22 @@ describe("production scene metadata", () => {
     expect(migrated.screenplaySettings.sceneNumbers).toMatchObject({ enabled: true, mode: "automatic", position: "both" });
     expect(migrated.screenplaySettings.pageNumbers.position).toBe("top-right");
     expect(migrated.screenplaySettings.continueds.character).toBe("automatic");
+  });
+
+  it("preserves locked numbers and gives an inserted scene a suffix", () => {
+    const numbered = synchroniseSceneMetadata({ preamble: "", elements: [createElement("scene-heading", "INT. A - DAY"), createElement("scene-heading", "INT. B - DAY")] }, defaultProjectData());
+    const lockedData = { ...numbered.projectData, screenplaySettings: { ...numbered.projectData.screenplaySettings, sceneNumbers: { ...numbered.projectData.screenplaySettings.sceneNumbers, mode: "locked" as const } }, scenes: numbered.projectData.scenes.map((scene) => ({ ...scene, locked: true, numberingMode: "locked" as const })) };
+    const inserted = synchroniseSceneMetadata({ ...numbered.document, elements: [numbered.document.elements[0], createElement("scene-heading", "INT. INSERT - DAY"), numbered.document.elements[1]] }, lockedData);
+    expect(inserted.document.elements.map((element) => element.metadata?.sceneNumber)).toEqual(["1", "1A", "2"]);
+  });
+
+  it("removes number metadata without altering scene headings", () => {
+    const numbered = synchroniseSceneMetadata({ preamble: "", elements: [createElement("scene-heading", "EXT. ROAD - NIGHT")] }, defaultProjectData());
+    const removed = removeSceneNumbers(numbered.document, numbered.projectData);
+    expect(removed.document.elements[0]).toMatchObject({ type: "scene-heading", text: "EXT. ROAD - NIGHT" });
+    expect(removed.document.elements[0].metadata?.sceneNumber).toBeUndefined();
+    expect(removed.projectData.screenplaySettings.sceneNumbers.enabled).toBe(false);
+    expect(removed.projectData.productionSnapshots.at(-1)).toMatchObject({ reason: "Before removing scene numbers" });
   });
 });
 
@@ -87,3 +104,4 @@ describe("context-aware autocomplete", () => {
     expect(getAutocompleteContext(createElement("scene-heading", "INT. OFFICE -"))).toBe("scene-time");
   });
 });
+

@@ -1,3 +1,4 @@
+
 export type ScreenplayElementType =
   | "scene-heading" | "action" | "character" | "parenthetical" | "dialogue"
   | "transition" | "shot" | "general" | "section" | "synopsis" | "note" | "page-break";
@@ -51,6 +52,7 @@ export const SCENE_PREFIXES = ["INT.", "EXT.", "INT./EXT.", "EXT./INT.", "I/E.",
 export const TIMES_OF_DAY = ["DAY", "NIGHT", "MORNING", "AFTERNOON", "EVENING", "DAWN", "DUSK", "CONTINUOUS", "LATER", "MOMENTS LATER", "SAME"];
 export const COMMON_TRANSITIONS = ["CUT TO:", "SMASH CUT TO:", "MATCH CUT TO:", "DISSOLVE TO:", "FADE IN:", "FADE OUT.", "FADE TO BLACK.", "INTERCUT:", "BACK TO:"];
 export const COMMON_SHOTS = ["CLOSE ON:", "ANGLE ON", "INSERT:", "POV:", "WIDE SHOT:", "ESTABLISHING SHOT:"];
+const COMMITTED_SCENE_PREFIX = /^(?:INT\.\/EXT\.|EXT\.\/INT\.|INT\.|EXT\.|I\/E\.|EST\.)(?:\s|$)/iu;
 
 const SCENE_PATTERN = /^(?:INT\.|EXT\.|INT\.\/EXT\.|EXT\.\/INT\.|I\/E\.|I\/E\.|EST\.)\s*/iu;
 const CHARACTER_PATTERN = /^([^()]{1,40}?)(?:\s+\(([^)]+)\))?$/u;
@@ -155,7 +157,8 @@ export function updateElementText(elements: ScreenplayElement[], index: number, 
   // Typing edits text only. Action-to-Character (or any other structural
   // transition) belongs to an explicit commit event such as Enter, Tab,
   // autocomplete acceptance, a shortcut, or the element selector.
-  if (type === "dialogue" && rawText.trimStart().startsWith("(")) type = "parenthetical";
+  if (type === "action" && COMMITTED_SCENE_PREFIX.test(rawText.trimStart())) type = "scene-heading";
+  else if (type === "dialogue" && rawText.trimStart().startsWith("(")) type = "parenthetical";
   const text = normalizeElementText(type, rawText);
   const metadata = type === "character" ? (() => { const value = parseCharacter(text); return { ...current.metadata, characterName: value.name, characterExtension: value.extension }; })() : current.metadata;
   const next = elements.map((element, position) => position === index ? { ...element, type, text, metadata } : element);
@@ -290,3 +293,4 @@ export function screenplayPasteElements(text: string): ScreenplayElement[] {
   const parsed = parseFountain(text);
   return parsed.elements.length ? parsed.elements : [createElement("action", text)];
 }
+

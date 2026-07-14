@@ -1,3 +1,4 @@
+
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
@@ -20,12 +21,12 @@ afterEach(cleanup);
 function setup() {
   const onChange = vi.fn();
   render(<Editor project={project} content={project.screenplay} dirty={false} saving={false} message=""
-    onChange={onChange} onProjectDataChange={vi.fn()} onSave={vi.fn()} onHome={vi.fn()} onReveal={vi.fn()}/>);
+    onChange={onChange} onProjectDataChange={vi.fn()} onSave={vi.fn()} onHome={vi.fn()} onReveal={vi.fn()} onExported={vi.fn()}/>);
   return { onChange };
 }
 
 describe("structured screenplay editor integration", () => {
-  it("completes scene → action → character → dialogue using Enter and Tab", () => {
+  it("completes scene â†’ action â†’ character â†’ dialogue using Enter and Tab", () => {
     setup();
     const scene = screen.getByLabelText("Scene Heading element 1") as HTMLTextAreaElement;
     fireEvent.change(scene, { target: { value: "int. reception centre - night", selectionStart: 29 } });
@@ -162,3 +163,4 @@ describe("structured screenplay editor integration", () => {
     expect(screen.getByLabelText("Character element 4")).toHaveValue("DEJI");
   });
 });
+

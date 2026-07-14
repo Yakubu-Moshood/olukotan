@@ -1,3 +1,4 @@
+
 import { describe, expect, it } from "vitest";
 import {
   applyEnter, applyTab, collectKnownCharacters, createElement, detectElementType,
@@ -22,7 +23,7 @@ describe("screenplay transition engine", () => {
     ["dialogue", "", "action"],
   ] as const)("%s plus Enter becomes %s", (type, text, expected) => expect(next(type, text)).toBe(expected));
 
-  it("uses the deliberate Action → Character → Scene Heading → Transition → Shot cycle", () => {
+  it("uses the deliberate Action â†’ Character â†’ Scene Heading â†’ Transition â†’ Shot cycle", () => {
     let elements = [createElement("action")];
     for (const expected of ["character", "scene-heading", "transition", "shot", "action"] as const) {
       const result = applyTab(elements, 0); elements = result.elements; expect(elements[0].type).toBe(expected);
@@ -56,9 +57,9 @@ describe("element-aware casing", () => {
   ] as const)("normalises %s", (type, input, expected) => expect(normalizeElementText(type, input)).toBe(expected));
 
   it("preserves Yoruba diacritics while uppercasing underlying text", () => {
-    expect(normalizeElementText("character", "Ṣẹ́gun")).toBe("ṢẸ́GUN");
-    expect(normalizeElementText("character", "Àdùnnì")).toBe("ÀDÙNNÌ");
-    expect(normalizeElementText("character", "Olúwatóbilọ́ba")).toBe("OLÚWATÓBILỌ́BA");
+    expect(normalizeElementText("character", "á¹¢áº¹Ìgun")).toBe("á¹¢áº¸ÌGUN");
+    expect(normalizeElementText("character", "Ã€dÃ¹nnÃ¬")).toBe("Ã€DÃ™NNÃŒ");
+    expect(normalizeElementText("character", "OlÃºwatÃ³bilá»Ìba")).toBe("OLÃšWATÃ“BILá»ŒÌBA");
   });
 });
 
@@ -115,6 +116,19 @@ describe("required keyboard writing flows", () => {
 });
 
 describe("Action typing and character commit points", () => {
+  it.each(["I", "IN", "INT", "E", "EX", "EXT"])('keeps partial scene prefix "%s" as Action', (text) => {
+    expect(updateElementText([createElement("action")], 0, text).elements[0]).toMatchObject({ type: "action", text });
+  });
+
+  it.each(["int.", "EXT.", "INT./EXT.", "EXT./INT.", "I/E.", "EST."])("converts committed scene prefix %s immediately", (text) => {
+    expect(updateElementText([createElement("action")], 0, text).elements[0]).toMatchObject({ type: "scene-heading", text: text.toUpperCase() });
+  });
+
+  it("converts a pasted full heading but not ordinary action", () => {
+    expect(updateElementText([createElement("action")], 0, "ext. market - night").elements[0]).toMatchObject({ type: "scene-heading", text: "EXT. MARKET - NIGHT" });
+    expect(updateElementText([createElement("action")], 0, "Inside the market, traders shout.").elements[0].type).toBe("action");
+  });
+
   it("keeps every partial known-character match as Action while typing", () => {
     let elements = [createElement("character", "DEJI"), createElement("dialogue", "I am leaving."), createElement("action")];
     for (const text of ["D", "De", "Dej", "Deji"]) {
@@ -150,7 +164,7 @@ describe("Action typing and character commit points", () => {
 describe("structured Fountain round trip", () => {
   it("preserves element types and text across save and reopen", () => {
     const original = {
-      preamble: "Title: Àdùnnì\nAuthor: Ṣẹ́gun",
+      preamble: "Title: Ã€dÃ¹nnÃ¬\nAuthor: á¹¢áº¹Ìgun",
       elements: [
         createElement("scene-heading", "int. reception centre - night", { sceneNumber: "12" }),
         createElement("action", "Daniel stands over the locked drawer."),
@@ -173,3 +187,4 @@ describe("structured Fountain round trip", () => {
     expect(parseFountain(fountain).elements[0]).toMatchObject({ type: "action", text: "NO ENTRY" });
   });
 });
+

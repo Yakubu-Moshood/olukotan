@@ -1,4 +1,4 @@
-import type { AppSettings, CreateProjectInput, ProjectData, ProjectPayload, RecentProject } from "./types";
+import type { AppSettings, CreateProjectInput, ExportFormat, ProjectData, ProjectPayload, RecentProject } from "./types";
 import { webStore } from "./web-store";
 
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -18,6 +18,7 @@ export interface OlukotanPlatform {
   saveSettings(settings: AppSettings): Promise<void>;
   reveal(path: string): Promise<void>;
   importProject(payload: ProjectPayload): Promise<void>;
+  recordExport(path: string, entry: { format: ExportFormat; path: string; exportedAt: string }): Promise<void>;
 }
 
 const defaults: AppSettings = { defaultProjectFolder: "This device", defaultAuthor: "", theme: "system", autosaveSeconds: 5, googleClientId: "", driveSyncEnabled: false };
@@ -31,6 +32,7 @@ const webPlatform: OlukotanPlatform = {
   removeRecent: (id) => webStore.remove(id), pinRecent: (id, pinned) => webStore.pin(id, pinned),
   async settings() { return { ...defaults, ...(await webStore.settings()) }; }, saveSettings: (value) => webStore.saveSettings(value),
   reveal: (path) => webStore.exportProject(path), importProject: (payload) => webStore.importProject(payload),
+  recordExport: (path, entry) => webStore.recordExport(path, entry),
 };
 
 const desktopPlatform: OlukotanPlatform = {
@@ -48,6 +50,7 @@ const desktopPlatform: OlukotanPlatform = {
   async saveSettings(settings) { const { invoke } = await import("@tauri-apps/api/core"); return invoke("save_settings", { settings }); },
   async reveal(projectPath) { const { invoke } = await import("@tauri-apps/api/core"); return invoke("reveal_in_explorer", { projectPath }); },
   async importProject() { throw new Error("Drive import is available in the web companion."); },
+  async recordExport(projectPath, entry) { const { invoke } = await import("@tauri-apps/api/core"); return invoke("record_export", { projectPath, entry }); },
 };
 
 export const platform = isTauri ? desktopPlatform : webPlatform;

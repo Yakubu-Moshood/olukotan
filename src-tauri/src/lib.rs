@@ -42,6 +42,9 @@ fn write_recovery(project_path: String, content: String) -> AppResult<()> { stor
 fn discard_recovery(project_path: String) -> AppResult<()> { storage::discard_recovery(&storage::path(project_path)) }
 
 #[tauri::command]
+fn record_export(project_path: String, entry: serde_json::Value) -> AppResult<()> { storage::record_export(&storage::path(project_path), entry) }
+
+#[tauri::command]
 fn recent_projects(db: State<'_, AppState>) -> AppResult<Vec<RecentProject>> {
     db.0.lock().map_err(|_| AppError::Validation("The local project index is temporarily unavailable.".into()))?.list_recent()
 }
@@ -86,7 +89,7 @@ pub fn run() {
             app.manage(AppState(Mutex::new(db)));
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![create_project, open_project, save_screenplay, write_recovery, discard_recovery, recent_projects, remove_recent, pin_recent, get_settings, save_settings, reveal_in_explorer])
+        .invoke_handler(tauri::generate_handler![create_project, open_project, save_screenplay, write_recovery, discard_recovery, record_export, recent_projects, remove_recent, pin_recent, get_settings, save_settings, reveal_in_explorer])
         .run(tauri::generate_context!())
         .expect("Olukotan failed to start");
 }
