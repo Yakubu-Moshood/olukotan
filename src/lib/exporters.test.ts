@@ -41,4 +41,18 @@ describe("screenplay exporters", () => {
     const fountain = await exportScreenplay("fountain", context);
     expect(fountain.data).not.toContain("(CONT'D)");
   });
+
+  it("does not introduce editor-layout line breaks into PDF, FDX, or DOCX character cues", async () => {
+    const cue = "UNCLE TUNDE (CONT'D)";
+    const document = synchroniseSceneMetadata({ preamble: "", elements: [
+      createElement("character", cue), createElement("dialogue", "Stay here."),
+    ] }, defaultProjectData());
+    const context = { project, document: document.document, projectData: document.projectData, options };
+    const fdx = String((await exportScreenplay("fdx", context)).data);
+    const pdf = new TextDecoder().decode((await exportScreenplay("pdf", context)).data as Uint8Array);
+    const docx = new TextDecoder().decode((await exportScreenplay("docx", context)).data as Uint8Array);
+    expect(fdx).toContain(`<Text>${cue}</Text>`);
+    expect(pdf).toContain("UNCLE TUNDE \\(CONT'D\\)");
+    expect(docx).toContain(`<w:t xml:space="preserve">${cue}</w:t>`);
+  });
 });

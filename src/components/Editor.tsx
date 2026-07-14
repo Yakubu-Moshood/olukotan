@@ -251,7 +251,7 @@ export function Editor({ project, content, dirty, saving, message, onChange, onP
           {element.type === "scene-heading" && displaySceneNumber(element, projectData) && projectData.screenplaySettings.sceneNumbers.showInEditor && ["right", "both"].includes(projectData.screenplaySettings.sceneNumbers.position) && <span className="scene-number-gutter scene-number-right">{displaySceneNumber(element, projectData)}</span>}
           {element.type === "page-break" ? <button className="explicit-page-break" onClick={() => setActiveIndex(index)}>Page break</button> : <textarea
             ref={(node) => { if (node) textareas.current.set(element.id, node); else textareas.current.delete(element.id); }}
-            aria-label={`${ELEMENT_LABELS[element.type]} element ${index + 1}`} value={element.text} readOnly={project.readOnly} style={element.type === "character" ? { width: `${Math.max(1, element.text.length)}ch` } : undefined}
+            aria-label={`${ELEMENT_LABELS[element.type]} element ${index + 1}`} value={element.text} readOnly={project.readOnly} style={element.type === "character" ? { width: `calc(${Math.max(1, element.text.length)}ch + 2px)`, flexShrink: 0, whiteSpace: "pre-wrap", wordBreak: "normal", overflowWrap: "normal" } : undefined}
             rows={Math.max(1, element.text.split("\n").length)} spellCheck={!(["scene-heading", "character", "transition", "shot"].includes(element.type))}
             onFocus={() => setActiveIndex(index)} onChange={(event) => onTextChange(index, event.target.value, event.target.selectionStart)}
             onKeyDown={(event) => onKeyDown(event, index)} onPaste={(event) => onPaste(event, index)}

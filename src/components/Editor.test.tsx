@@ -200,4 +200,23 @@ describe("structured screenplay editor integration", () => {
     expect(cue).toHaveAttribute("data-rendered-cue", "DEJI (CONT'D)");
     expect(screen.queryByLabelText("Automatic character continued")).not.toBeInTheDocument();
   });
+
+  it.each([
+    "REMI", "TOBIAS", "DEJI", "EMEKA", "AYOMIDE", "UNCLE TUNDE", "YOUNG DANIEL",
+    "TOBIAS (CONT'D)", "TOBIAS (V.O.)", "TOBIAS (O.S.)", "UNCLE TUNDE (CONT'D)",
+  ])("keeps the complete Character cue %s in a non-shrinking single-line field", (cueText) => {
+    setup();
+    const scene = screen.getByLabelText("Scene Heading element 1") as HTMLTextAreaElement;
+    fireEvent.change(scene, { target: { value: "INT. ROOM - DAY", selectionStart: 15 } }); fireEvent.keyDown(scene, { key: "Enter" });
+    fireEvent.keyDown(screen.getByLabelText("Action element 2"), { key: "Tab" });
+    const character = screen.getByLabelText("Character element 2") as HTMLTextAreaElement;
+    fireEvent.change(character, { target: { value: cueText, selectionStart: cueText.length } });
+    const cue = character.closest(".character-cue") as HTMLElement;
+    expect(character.value).not.toContain("\n");
+    expect(character.style.width).toBe(`calc(${cueText.length}ch + 2px)`);
+    expect(cue).toHaveClass("character-cue");
+    expect(character.style.flexShrink).toBe("0");
+    expect(character.style.wordBreak).toBe("normal");
+    expect(character.style.overflowWrap).toBe("normal");
+  });
 });
