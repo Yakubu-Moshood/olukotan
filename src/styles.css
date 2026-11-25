@@ -28,3 +28,6 @@
 .page-separator span{position:absolute;right:6%;top:-10px;background:var(--paper,#fff);padding:0 6px;font:11px "Segoe UI",sans-serif;color:#8a8478}
 .revision-mark{position:absolute;right:-9%;top:0;font-weight:700;color:var(--accent,#bd4d31)}
 .screenplay-block{position:relative}
+.import-preview{margin-top:18px;border-top:1px solid #ddd6ca;padding-top:14px}.import-preview dl{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin:0 0 12px}.import-preview dt{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}.import-preview dd{margin:2px 0 0;font-weight:600}
+.import-scenes{font:12px "Courier Prime","Courier New",monospace;background:#fff;border:1px solid #e3ddd2;border-radius:7px;padding:10px 10px 10px 34px;margin:0 0 10px;max-height:150px;overflow:auto}.import-scenes .more{list-style:none;color:var(--muted)}
+.import-warning{display:flex;gap:6px;align-items:center;font-size:12px;color:#8a5a00;background:#fff7e0;border:1px solid #f0dca4;padding:7px 9px;border-radius:6px;margin:6px 0}

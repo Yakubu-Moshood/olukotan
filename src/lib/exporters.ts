@@ -4,6 +4,7 @@ import { renderedCharacterCue } from "./screenplay-production";
 import { layoutTitlePage, paginate, parseTitlePage, type Layout } from "./pagination";
 import { renderPdf, type FontLoader } from "./pdf-render";
 import { revisionHeader, revisionMarkFor } from "./revisions";
+import { writeFdx } from "./fdx";
 
 export interface ExportOptions {
   includeTitlePage: boolean; includeSceneNumbers: boolean; includePageNumbers: boolean;
@@ -62,14 +63,15 @@ const htmlExporter: Exporter = { format: "html", extension: "html", async export
   return result("html", "html", "text/html;charset=utf-8", `<!doctype html><html><head><meta charset="utf-8"><title>${escapeXml(context.project.manifest.title)}</title><style>${css}</style></head><body>${context.options.includeTitlePage ? `<header><h1>${escapeXml(context.project.manifest.title)}</h1><p>${escapeXml(context.project.manifest.author)}</p></header>` : ""}${body}</body></html>`);
 } };
 
-const fdxType: Record<string, string> = { "scene-heading": "Scene Heading", action: "Action", character: "Character", parenthetical: "Parenthetical", dialogue: "Dialogue", transition: "Transition", shot: "Shot", general: "General", note: "ScriptNote" };
 const fdxExporter: Exporter = { format: "fdx", extension: "fdx", async export(context) {
-  const paragraphs = visibleElements(context).filter((element) => element.type !== "page-break").map((element) => {
-    const number = context.options.includeSceneNumbers && element.type === "scene-heading" ? sceneNumber(element, context.projectData) : undefined;
-    return `<Paragraph Type="${fdxType[element.type] ?? "Action"}"${number ? ` Number="${escapeXml(number)}"` : ""}${element.metadata?.sceneId ? ` SceneId="${escapeXml(element.metadata.sceneId)}"` : ""}><Text>${escapeXml(exportText(context, element))}</Text></Paragraph>`;
-  }).join("");
-  const title = context.options.includeTitlePage ? `<TitlePage><Content><Paragraph Type="Title"><Text>${escapeXml(context.project.manifest.title)}</Text></Paragraph><Paragraph Type="Author"><Text>${escapeXml(context.project.manifest.author)}</Text></Paragraph></Content></TitlePage>` : "";
-  return result("fdx", "fdx", "application/xml;charset=utf-8", `<?xml version="1.0" encoding="UTF-8" standalone="no"?><FinalDraft DocumentType="Script" Template="No" Version="5">${title}<Content>${paragraphs}</Content></FinalDraft>`);
+  const fields = parseTitlePage(context.document.preamble);
+  // Character cues are written as typed: Final Draft computes its own automatic (CONT'D).
+  const xml = writeFdx(context.document, context.projectData, {
+    includeSceneNumbers: context.options.includeSceneNumbers, includeNotes: context.options.includeScriptNotes, includeTitlePage: context.options.includeTitlePage,
+    titlePage: { ...fields, title: fields.title ?? context.project.manifest.title, author: fields.author ?? context.project.manifest.author },
+    template: context.projectData.importSource?.fdxTemplate,
+  });
+  return result("fdx", "fdx", "application/xml;charset=utf-8", xml);
 } };
 
 const rtfEscape = (value: string) => [...value].map((character) => { const code = character.charCodeAt(0); if (character === "\\" || character === "{" || character === "}") return `\\${character}`; return code > 127 ? `\\u${code > 32767 ? code - 65536 : code}?` : character; }).join("");

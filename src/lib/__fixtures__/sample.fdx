@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<FinalDraft DocumentType="Script" Template="No" Version="5">
+
+  <Content>
+    <Paragraph Type="Transition">
+      <Text>FADE IN:</Text>
+    </Paragraph>
+    <Paragraph Number="1" Type="Scene Heading">
+      <SceneProperties Color="#FFFF00000000" Length="1 2/8" Page="1" Title="Market">
+        <Summary>
+          <Paragraph Alignment="Left" FirstIndent="0.00" Leading="Regular" LeftIndent="0.00" RightIndent="1.39" SpaceBefore="0" Spacing="1" StartsNewPage="No">
+            <Text>Tolu searches the night market for her mother.</Text>
+          </Paragraph>
+        </Summary>
+      </SceneProperties>
+      <Text>EXT. ỌJÀ MARKET - NIGHT</Text>
+    </Paragraph>
+    <Paragraph Type="Action">
+      <Text>Rain hammers the tin roofs. </Text>
+      <Text Style="Bold">TOLU (30s)</Text>
+      <Text> clutches a </Text>
+      <Text Style="Underline">wrapped bundle</Text>
+      <Text>. 5 * 3 stalls are shut.</Text>
+    </Paragraph>
+    <Paragraph Type="Character">
+      <Text>TOLU</Text>
+    </Paragraph>
+    <Paragraph Type="Parenthetical">
+      <Text>(whispering)</Text>
+    </Paragraph>
+    <Paragraph Type="Dialogue">
+      <Text RevisionID="2">Màmá? Are you here?</Text>
+      <ScriptNote ID="1"><Paragraph><Text>Check pronunciation with cast.</Text></Paragraph></ScriptNote>
+    </Paragraph>
+    <Paragraph>
+      <DualDialogue>
+        <Paragraph Type="Character"><Text>IYÁ ÀGBÀ (O.S.)</Text></Paragraph>
+        <Paragraph Type="Dialogue"><Text>Come home.</Text></Paragraph>
+        <Paragraph Type="Character"><Text>TOLU</Text></Paragraph>
+        <Paragraph Type="Dialogue"><Text Style="Italic">Never.</Text></Paragraph>
+      </DualDialogue>
+    </Paragraph>
+    <Paragraph Type="New Act">
+      <Text>ACT TWO</Text>
+    </Paragraph>
+    <Paragraph Number="2A" StartsNewPage="Yes" Type="Scene Heading">
+      <Text>INT. TOLU'S ROOM - CONTINUOUS</Text>
+    </Paragraph>
+    <Paragraph Type="Shot">
+      <Text>CLOSE ON THE BUNDLE</Text>
+    </Paragraph>
+  </Content>
+
+  <TitlePage>
+    <Content>
+      <Paragraph Alignment="Center"><Text></Text></Paragraph>
+      <Paragraph Alignment="Center"><Text>ÀBÍKẸ́</Text></Paragraph>
+      <Paragraph Alignment="Center"><Text></Text></Paragraph>
+      <Paragraph Alignment="Center"><Text>Written by</Text></Paragraph>
+      <Paragraph Alignment="Center"><Text>Yakubu Moshood</Text></Paragraph>
+      <Paragraph Alignment="Left"><Text>Before Light Media</Text></Paragraph>
+      <Paragraph Alignment="Left"><Text>Lagos</Text></Paragraph>
+      <Paragraph Alignment="Right"><Text>Blue Draft 2026</Text></Paragraph>
+    </Content>
+  </TitlePage>
+
+  <ElementSettings Type="Action">
+    <FontSpec AdornmentStyle="0" Background="#FFFFFFFFFFFF" Color="#000000000000" Font="Courier Final Draft" RevisionID="0" Size="12" Style=""/>
+    <ParagraphSpec Alignment="Left" FirstIndent="0.00" Leading="Regular" LeftIndent="1.50" RightIndent="7.50" SpaceBefore="12" Spacing="1" StartsNewPage="No"/>
+  </ElementSettings>
+
+  <Revisions ActiveSet="2" Location="7.75" RevisionMode="Yes" RevisionsShown="Active" ShowAllMarks="No" ShowAllSets="No">
+    <Revision Color="#000000000000" FullRevision="No" ID="1" Mark="*" Name="First Revision" PageColor="#FFFFFFFFFFFF" Style=""/>
+    <Revision Color="#000000000000" FullRevision="No" ID="2" Mark="*" Name="Blue Revision" PageColor="#CFCFE2E2FFFF" Style=""/>
+  </Revisions>
+
+  <SmartType>
+    <Characters><Character>TOLU</Character><Character>IYÁ ÀGBÀ</Character></Characters>
+  </SmartType>
+</FinalDraft>

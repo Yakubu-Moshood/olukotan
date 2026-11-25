@@ -43,7 +43,9 @@ describe("screenplay exporters", () => {
     ] }, defaultProjectData());
     const context = { project, document: continuation.document, projectData: continuation.projectData, options, fontLoader };
     const fdx = await exportScreenplay("fdx", context);
-    expect(fdx.data).toContain('<Paragraph Type="Character"><Text>DEJI (V.O.) (CONT\'D)</Text></Paragraph>');
+    // Final Draft adds automatic (CONT'D) itself, so FDX keeps the cue as typed.
+    expect(fdx.data).toContain('<Paragraph Type="Character"><Text>DEJI (V.O.)</Text></Paragraph>');
+    expect(fdx.data).not.toContain("(CONT'D)");
     expect(bodyLines(context).map((line) => runsText(line.runs))).toContain("DEJI (V.O.) (CONT'D)");
     const fountain = await exportScreenplay("fountain", context);
     expect(fountain.data).not.toContain("(CONT'D)");

@@ -134,6 +134,8 @@ export interface ProjectData {
   revisionSets: RevisionSet[];
   beats: Beat[];
   pageLock: PageLock;
+  /** Where the screenplay was imported from. For FDX, non-script sections are kept so export can write them back. */
+  importSource?: { format: "fdx" | "fountain"; fileName: string; importedAt: string; fdxTemplate?: string };
   productionSnapshots: { createdAt: string; reason: string; screenplay: string }[];
 }
 
@@ -159,6 +161,7 @@ export function migrateProjectData(value?: Partial<ProjectData>): ProjectData {
     revisionSets: Array.isArray(value?.revisionSets) ? value.revisionSets : [],
     beats: Array.isArray(value?.beats) ? value.beats : [],
     pageLock: value?.pageLock && Array.isArray(value.pageLock.pageStarts) ? value.pageLock : { locked: false, pageStarts: [] },
+    ...(value?.importSource ? { importSource: value.importSource } : {}),
     productionSnapshots: Array.isArray(value?.productionSnapshots) ? value.productionSnapshots : [],
     screenplaySettings: {
       ...defaults.screenplaySettings, ...settings,

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CreateProjectDialog } from "./components/CreateProjectDialog";
 import { Editor } from "./components/Editor";
 import { Home } from "./components/Home";
+import { ImportDialog } from "./components/ImportDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { googleDrive } from "./google-drive";
 import { platform } from "./platform";
@@ -14,6 +15,7 @@ export default function App() {
   const [recents, setRecents] = useState<RecentProject[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [settings, setSettings] = useState(defaultSettings);
   const [project, setProject] = useState<ProjectPayload | null>(null);
   const [content, setContent] = useState("");
@@ -106,9 +108,10 @@ export default function App() {
     onReveal={() => void platform.reveal(project.projectPath)} />;
 
   const webMode = platform.kind === "web";
-  return <><Home recents={recents} onCreate={() => setCreateOpen(true)} onOpen={() => void openFolder()} onOpenRecent={(path) => void openRecent(path)}
+  return <><Home recents={recents} onCreate={() => setCreateOpen(true)} onImport={() => setImportOpen(true)} onOpen={() => void openFolder()} onOpenRecent={(path) => void openRecent(path)}
     onRemove={(id) => void platform.removeRecent(id).then(refresh)} onPin={(item) => void platform.pinRecent(item.projectId, !item.pinned).then(refresh)} onReveal={(path) => void platform.reveal(path)} onSettings={() => setSettingsOpen(true)} webMode={webMode}
     drive={{ configured: settings.driveSyncEnabled && Boolean(settings.googleClientId), connected: driveConnected, busy: driveBusy, message: driveMessage, onConnect: () => void syncDrive(), onSync: () => void syncDrive() }} />
     {createOpen && <CreateProjectDialog onClose={() => setCreateOpen(false)} onCreated={enterProject} defaultAuthor={settings.defaultAuthor} defaultFolder={settings.defaultProjectFolder || (webMode ? "This device" : "")} webMode={webMode}/>} 
+    {importOpen && <ImportDialog onClose={() => setImportOpen(false)} defaultAuthor={settings.defaultAuthor} defaultFolder={settings.defaultProjectFolder || (webMode ? "This device" : "")} onImported={(value) => { setImportOpen(false); enterProject(value); void refresh(); }}/>}
     {settingsOpen && <SettingsDialog initial={settings} onClose={() => setSettingsOpen(false)} webMode={webMode} onSave={async (value) => { await platform.saveSettings(value); setSettings(value); setSettingsOpen(false); }}/>}</>;
 }

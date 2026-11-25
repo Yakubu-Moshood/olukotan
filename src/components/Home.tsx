@@ -4,8 +4,8 @@ import { CloudSyncPanel } from "./CloudSyncPanel";
 
 const labels: Record<string,string> = { local: "Local folder", "google-drive": "Google Drive", onedrive: "OneDrive", dropbox: "Dropbox", external: "External drive", unknown: "Unknown location" };
 
-export function Home({ recents, onCreate, onOpen, onOpenRecent, onRemove, onPin, onReveal, onSettings, webMode, drive }: {
-  recents: RecentProject[]; onCreate(): void; onOpen(): void; onOpenRecent(path: string): void;
+export function Home({ recents, onCreate, onImport, onOpen, onOpenRecent, onRemove, onPin, onReveal, onSettings, webMode, drive }: {
+  recents: RecentProject[]; onCreate(): void; onImport(): void; onOpen(): void; onOpenRecent(path: string): void;
   onRemove(id: string): void; onPin(item: RecentProject): void; onReveal(path: string): void; onSettings(): void;
   webMode: boolean; drive: { configured: boolean; connected: boolean; busy: boolean; message: string; onConnect(): void; onSync(): void };
 }) {
@@ -15,7 +15,7 @@ export function Home({ recents, onCreate, onOpen, onOpenRecent, onRemove, onPin,
       <div className="hero-actions"><button className="primary large" onClick={onCreate}><FilePlus2 size={19}/> Create new project</button><button className="secondary large" onClick={onOpen}><FolderOpen size={19}/> {webMode ? "Open or sync project" : "Open project"}</button></div>
     </section>
     <section className="quick-grid">
-      <button className="quick-card" disabled><Import/><span><strong>Import a document</strong><small>Fountain and Final Draft arrive in Phase 3</small></span></button>
+      <button className="quick-card" onClick={onImport}><Import/><span><strong>Import a screenplay</strong><small>Final Draft (.fdx) or Fountain</small></span></button>
       <button className="quick-card" disabled><RotateCcw/><span><strong>Recover unsaved work</strong><small>Recovery is offered when a project opens</small></span></button>
       <button className="quick-card" disabled><HelpCircle/><span><strong>Help and guides</strong><small>Read the included documentation</small></span></button>
     </section>
