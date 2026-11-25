@@ -228,9 +228,10 @@ function elementFromLine(type: ScreenplayElementType, text: string): ScreenplayE
 export function parseFountain(source: string): ScreenplayDocument {
   const lines = source.replace(/\r\n/g, "\n").split("\n");
   const preamble: string[] = [];
-  while (lines.length && (/^[A-Za-z][A-Za-z ]+:/u.test(lines[0]) || (!lines[0].trim() && preamble.length))) {
-    preamble.push(lines.shift()!);
-    if (preamble.length && !lines[0]?.trim() && preamble.at(-1) === "") { lines.shift(); break; }
+  // Fountain title page: key/value lines (with indented continuations) up to the first blank line.
+  if (lines.length && /^[A-Za-z][A-Za-z ]*:/u.test(lines[0]) && !isTransition(lines[0].trim())) {
+    while (lines.length && lines[0].trim()) preamble.push(lines.shift()!);
+    while (lines.length && !lines[0].trim()) lines.shift();
   }
   const elements: ScreenplayElement[] = [];
   let marker: ScreenplayElementType | undefined;

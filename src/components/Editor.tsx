@@ -1,6 +1,9 @@
 import { ArrowLeft, Bold, ChevronLeft, ChevronRight, Cloud, Command, FileText, FolderOpen, Italic, PanelLeftClose, PanelRightClose, Redo2, Save, Search, Settings, Underline, Undo2, WifiOff } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { approximatePageCount, wordCount } from "../lib/screenplay";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { wordCount } from "../lib/screenplay";
+import { paginate } from "../lib/pagination";
+import { revisionMarkFor } from "../lib/revisions";
+import { TitlePageDialog } from "./TitlePageDialog";
 import { automaticContinued, autocompleteSuggestions, displaySceneNumber, getAutocompleteContext, removeSceneNumbers, renderedCharacterCue, synchroniseSceneMetadata } from "../lib/screenplay-production";
 import {
   ELEMENT_LABELS, SCENE_PREFIXES, TIMES_OF_DAY, applyEnter, applyTab, collectKnownCharacters,
@@ -93,7 +96,21 @@ export function Editor({ project, content, dirty, saving, message, onChange, onP
   const knownCharacters = useMemo(() => collectKnownCharacters(document.elements), [document.elements]);
   const sceneLocations = useMemo(() => collectSceneLocations(document.elements), [document.elements]);
   const fountain = useMemo(() => serializeFountain(document), [document]);
-  const pages = approximatePageCount(fountain);
+  const deferredDocument = useDeferredValue(document);
+  const layout = useMemo(() => paginate(deferredDocument, projectData, {
+    sceneNumber: (element) => projectData.scenes.find((scene) => scene.sceneId === element.metadata?.sceneId)?.number,
+    revisionMark: (element) => revisionMarkFor(element, projectData),
+  }), [deferredDocument, projectData]);
+  const pages = layout.pages.length;
+  const pageOf = (index: number): number | undefined => { for (let i = index; i >= 0; i--) { const page = layout.elementPage.get(document.elements[i]?.id); if (page) return page; } return undefined; };
+  const activePage = pageOf(activeIndex) ?? 1;
+  const goToPage = (target: number) => {
+    const page = layout.pages[target - 1]; if (!page) return;
+    const index = document.elements.findIndex((element) => element.id === page.elementIds[0]); if (index < 0) return;
+    setActiveIndex(index); focusRequest.current = { index, cursor: 0 }; setDocument({ ...document });
+  };
+  const [titlePageOpen, setTitlePageOpen] = useState(false);
+  const pageView = projectData.screenplaySettings.pagination.viewMode === "page";
   const scenes = useMemo(() => document.elements.map((element, index) => ({ element, index })).filter(({ element }) => element.type === "scene-heading" && element.text), [document.elements]);
 
   const changeType = (type: ScreenplayElementType, index = activeIndex) => {
@@ -238,15 +255,15 @@ export function Editor({ project, content, dirty, saving, message, onChange, onP
       <button className="folder-link" onClick={() => project.projectPath.startsWith("browser://") ? setExportOpen(true) : onReveal()}><FolderOpen size={16}/> {project.projectPath.startsWith("browser://") ? "Export screenplay…" : "Open project folder"}</button>
     </aside>
     <main className="writing-area"><div className="editor-toolbar">
-      <div className="menu-control"><button onClick={() => { setFileMenuOpen((open) => !open); setProductionMenuOpen(false); }}>File</button>{fileMenuOpen && <div className="app-menu" role="menu"><button role="menuitem" onClick={() => { setExportOpen(true); setFileMenuOpen(false); }}>Export…</button><button role="menuitem" onClick={() => { setExportOpen(true); setFileMenuOpen(false); }}>Export As…</button><button role="menuitem" onClick={() => { setExportOpen(true); setFileMenuOpen(false); }}>Save Copy As…</button></div>}</div>
+      <div className="menu-control"><button onClick={() => { setFileMenuOpen((open) => !open); setProductionMenuOpen(false); }}>File</button>{fileMenuOpen && <div className="app-menu" role="menu"><button role="menuitem" onClick={() => { setTitlePageOpen(true); setFileMenuOpen(false); }}>Title Page…</button><button role="menuitem" onClick={() => { setExportOpen(true); setFileMenuOpen(false); }}>Export…</button><button role="menuitem" onClick={() => { setExportOpen(true); setFileMenuOpen(false); }}>Export As…</button><button role="menuitem" onClick={() => { setExportOpen(true); setFileMenuOpen(false); }}>Save Copy As…</button></div>}</div>
       <div className="menu-control"><button onClick={() => { setProductionMenuOpen((open) => !open); setFileMenuOpen(false); }}>Production</button>{productionMenuOpen && <div className="app-menu" role="menu"><button role="menuitem" disabled={!scenes.length} onClick={numberScenes}>Number Scenes…</button><button role="menuitem" disabled={!projectData.scenes.some((scene) => scene.number)} onClick={removeNumbers}>Remove Scene Numbers…</button><button role="menuitem" disabled={!scenes.length} onClick={renumberScenes}>Renumber Scenes…</button><button role="menuitem" disabled={!projectData.scenes.some((scene) => scene.number) || projectData.screenplaySettings.sceneNumbers.mode === "locked"} onClick={lockSceneNumbers}>Lock Scene Numbers</button><button role="menuitem" disabled={projectData.screenplaySettings.sceneNumbers.mode !== "locked"} onClick={unlockSceneNumbers}>Unlock Scene Numbers</button><button role="menuitem" disabled={!activeScene} onClick={setCurrentSceneNumber}>Set Current Scene Number…</button></div>}</div>
       <select aria-label="Screenplay element" value={active?.type ?? "action"} onChange={(event) => changeType(event.target.value as ScreenplayElementType)}>{SELECTABLE_TYPES.map((type) => <option key={type} value={type}>{ELEMENT_LABELS[type]}</option>)}</select>
       <button className="icon-button" aria-label="Bold" onClick={() => wrapSelection("**")}><Bold size={16}/></button><button className="icon-button" aria-label="Italic" onClick={() => wrapSelection("*")}><Italic size={16}/></button><button className="icon-button" aria-label="Underline" onClick={() => wrapSelection("_")}><Underline size={16}/></button>
       <button className="icon-button" aria-label="Undo" onClick={undo} disabled={!history.current.past.length}><Undo2 size={16}/></button><button className="icon-button" aria-label="Redo" onClick={redo} disabled={!history.current.future.length}><Redo2 size={16}/></button><button className="icon-button" aria-label="Command palette" onClick={() => setPaletteOpen(true)}><Command size={16}/></button>
-      <span/><button className="icon-button" aria-label="Previous page"><ChevronLeft size={17}/></button><strong>Page 1 of ~{pages}</strong><button className="icon-button" aria-label="Next page"><ChevronRight size={17}/></button></div>
+      <span/><button className="icon-button" aria-label="Previous page" disabled={activePage <= 1} onClick={() => goToPage(activePage - 1)}><ChevronLeft size={17}/></button><strong>Page {layout.pages[activePage - 1]?.label ?? activePage} of {pages}</strong><button className="icon-button" aria-label="Next page" disabled={activePage >= pages} onClick={() => goToPage(activePage + 1)}><ChevronRight size={17}/></button></div>
       {project.readOnly && <div className="read-only">Read-only mode — this folder cannot be written to. Your original files are unchanged.</div>}
       <div className="page-wrap"><div className="paper screenplay-paper" role="textbox" aria-label="Screenplay editor" aria-multiline="true">
-        {document.elements.map((element, index) => <div className={`screenplay-block screenplay-${element.type} ${element.type === "character" ? "character-cue" : ""} ${index === activeIndex ? "is-active" : ""}`} key={element.id} data-element-type={element.type} data-rendered-cue={element.type === "character" ? renderedCharacterCue(document.elements, index, projectData.screenplaySettings) : undefined}>
+        {document.elements.map((element, index) => <PageAware key={element.id} show={pageView} page={layout.elementPage.get(element.id)} previous={index ? pageOf(index - 1) : undefined} label={(page) => layout.pages[page - 1]?.label ?? String(page)}><div className={`screenplay-block screenplay-${element.type} ${element.type === "character" ? "character-cue" : ""} ${index === activeIndex ? "is-active" : ""}`} data-element-type={element.type} data-rendered-cue={element.type === "character" ? renderedCharacterCue(document.elements, index, projectData.screenplaySettings) : undefined}>
           {element.type === "scene-heading" && displaySceneNumber(element, projectData) && projectData.screenplaySettings.sceneNumbers.showInEditor && ["left", "both"].includes(projectData.screenplaySettings.sceneNumbers.position) && (projectData.screenplaySettings.sceneNumbers.mode === "manual" ? <input className="scene-number-input scene-number-left" aria-label={`Scene number ${index + 1}`} value={displaySceneNumber(element, projectData)} onFocus={() => setActiveIndex(index)} onChange={(event) => updateSceneNumber(index, event.target.value.replace(/#/g, ""))}/> : <span className="scene-number-gutter scene-number-left">{displaySceneNumber(element, projectData)}</span>)}
           {element.type === "scene-heading" && displaySceneNumber(element, projectData) && projectData.screenplaySettings.sceneNumbers.showInEditor && ["right", "both"].includes(projectData.screenplaySettings.sceneNumbers.position) && <span className="scene-number-gutter scene-number-right">{displaySceneNumber(element, projectData)}</span>}
           {element.type === "page-break" ? <button className="explicit-page-break" onClick={() => setActiveIndex(index)}>Page break</button> : <textarea
@@ -258,16 +275,24 @@ export function Editor({ project, content, dirty, saving, message, onChange, onP
             onContextMenu={(event) => { event.preventDefault(); setActiveIndex(index); setContextMenu({ x: event.clientX, y: event.clientY }); }}/>} 
           {automaticContinued(document.elements, index, projectData.screenplaySettings) && !parseCharacter(element.text).extensions.some((extension) => extension.replace(/[’`]/gu, "'") === "CONT'D") && <span className="automatic-continued" aria-label="Automatic character continued">(CONT'D)</span>}
           {index === activeIndex && suggestions.length > 0 && <div className="screenplay-suggestions" role="listbox" aria-label={`${ELEMENT_LABELS[element.type]} suggestions`}>{suggestions.map((suggestion, suggestionPosition) => <button className={suggestionPosition === suggestionIndex ? "selected" : ""} key={`${suggestion.type}-${suggestion.value}`} role="option" aria-label={suggestion.value} aria-selected={suggestionPosition === suggestionIndex} onMouseDown={(event) => event.preventDefault()} onClick={() => chooseSuggestion(suggestion)}><span>{suggestion.value}</span><small>{suggestion.category}</small></button>)}</div>}
-        </div>)}
+          {revisionMarkFor(element, projectData) && <span className="revision-mark" aria-label="Revised">{revisionMarkFor(element, projectData)}</span>}
+        </div></PageAware>)}
       </div></div>
     </main>
-    <aside className="right-sidebar"><div className="panel-heading"><span>Project</span><button className="icon-button" aria-label="Collapse project inspector"><PanelRightClose size={17}/></button></div><div className="inspector-section"><p className="eyebrow">Document</p><h3><FileText size={17}/> Screenplay</h3><dl><div><dt>Active element</dt><dd>{active ? ELEMENT_LABELS[active.type] : "—"}</dd></div><div><dt>Format</dt><dd>Structured Fountain</dd></div><div><dt>Page size</dt><dd>{project.manifest.pageSize}</dd></div><div><dt>Scenes</dt><dd>{scenes.length}</dd></div><div><dt>Words</dt><dd>{wordCount(fountain).toLocaleString()}</dd></div></dl><p className="pagination-note">Page count is approximate while exact font-metric pagination is under development.</p></div>
+    <aside className="right-sidebar"><div className="panel-heading"><span>Project</span><button className="icon-button" aria-label="Collapse project inspector"><PanelRightClose size={17}/></button></div><div className="inspector-section"><p className="eyebrow">Document</p><h3><FileText size={17}/> Screenplay</h3><dl><div><dt>Active element</dt><dd>{active ? ELEMENT_LABELS[active.type] : "—"}</dd></div><div><dt>Format</dt><dd>Structured Fountain</dd></div><div><dt>Page size</dt><dd>{project.manifest.pageSize}</dd></div><div><dt>Scenes</dt><dd>{scenes.length}</dd></div><div><dt>Words</dt><dd>{wordCount(fountain).toLocaleString()}</dd></div></dl><p className="pagination-note">Pages match the printed PDF: Courier 12 pt, {projectData.screenplaySettings.pagination.pageSize}, {layout.geometry.linesPerPage} lines per page.</p></div>
       <div className="ownership-note"><Cloud size={19}/><strong>Stored on your device</strong><p>{project.projectPath}</p></div>
     </aside>
-    <footer className="status-bar"><span>{message || (dirty ? "Editing" : "All changes saved")}</span><span>{activeSceneNumber ? `Scene ${activeSceneNumber} · ` : ""}{active ? ELEMENT_LABELS[active.type] : ""} · {wordCount(fountain).toLocaleString()} words · ~{pages} {pages === 1 ? "page" : "pages"} · UTF-8</span></footer>
+    <footer className="status-bar"><span>{message || (dirty ? "Editing" : "All changes saved")}</span><span>{activeSceneNumber ? `Scene ${activeSceneNumber} · ` : ""}{active ? ELEMENT_LABELS[active.type] : ""} · {wordCount(fountain).toLocaleString()} words · Page {activePage} of {pages} · UTF-8</span></footer>
     {contextMenu && <div className="element-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} role="menu" onClick={(event) => event.stopPropagation()}>{active?.type === "scene-heading" && <button role="menuitem" onClick={setCurrentSceneNumber}>Set Scene Number…</button>}{SELECTABLE_TYPES.map((type) => <button role="menuitem" key={type} onClick={() => changeType(type)}>{ELEMENT_LABELS[type]} <kbd>Ctrl+{Object.entries(SHORTCUT_TYPES).find(([, value]) => value === type)?.[0] ?? ""}</kbd></button>)}</div>}
     {paletteOpen && <div className="command-palette-backdrop" onMouseDown={() => setPaletteOpen(false)}><div className="command-palette" role="dialog" aria-label="Element command palette" onMouseDown={(event) => event.stopPropagation()}><h2>Change screenplay element</h2>{SELECTABLE_TYPES.map((type) => <button key={type} onClick={() => changeType(type)}><span>{ELEMENT_LABELS[type]}</span><kbd>Ctrl+{Object.entries(SHORTCUT_TYPES).find(([, value]) => value === type)?.[0] ?? ""}</kbd></button>)}</div></div>}
     {screenplaySettingsOpen && <ScreenplaySettingsDialog initial={projectData.screenplaySettings} onClose={() => setScreenplaySettingsOpen(false)} onSave={saveScreenplaySettings}/>} 
+    {titlePageOpen && <TitlePageDialog preamble={document.preamble} fallbackTitle={project.manifest.title} fallbackAuthor={project.manifest.author} onClose={() => setTitlePageOpen(false)} onSave={(preamble) => { commitDocument({ ...document, preamble }, { index: activeIndex, cursor: active?.text.length ?? 0 }); setTitlePageOpen(false); }}/>}
     {exportOpen && <ExportDialog project={project} document={document} projectData={projectData} onClose={() => setExportOpen(false)} onExported={onExported}/>} 
   </div>;
+}
+
+/** Renders a page separator before the first element on each new page (page view only). */
+function PageAware({ show, page, previous, label, children }: { show: boolean; page?: number; previous?: number; label(page: number): string; children: React.ReactNode }) {
+  const starts = show && page !== undefined && previous !== undefined && page > previous;
+  return <>{starts && <div className="page-separator" role="separator" aria-label={`Page ${label(page!)}`}><span>{label(page!)}.</span></div>}{children}</>;
 }

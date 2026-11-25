@@ -69,6 +69,8 @@ export interface ScreenplaySettings {
   pagination: {
     pageSize: "A4" | "US Letter";
     viewMode: "page" | "continuous";
+    /** Blank lines before scene headings (Final Draft default: 2). */
+    sceneHeadingSpacing?: 1 | 2;
   };
   exportDefaults: {
     format: ExportFormat;
@@ -96,10 +98,42 @@ export interface SceneMetadata {
   omitted?: boolean;
 }
 
+export interface RevisionSet {
+  id: string;
+  name: string;
+  colour: string;
+  mark: string;
+  date?: string;
+  hidden?: boolean;
+}
+
+export interface Beat {
+  id: string;
+  title: string;
+  body?: string;
+  colour?: string;
+  /** Position on the Beat Board canvas, in board pixels. */
+  x: number;
+  y: number;
+  /** Scenes this beat is linked to. */
+  sceneIds?: string[];
+}
+
+export interface PageLock {
+  /** True once pages are locked; new material then creates A-pages. */
+  locked: boolean;
+  lockedAt?: string;
+  /** Element id that starts each locked page, in page order. */
+  pageStarts: string[];
+}
+
 export interface ProjectData {
   schemaVersion: 1;
   screenplaySettings: ScreenplaySettings;
   scenes: SceneMetadata[];
+  revisionSets: RevisionSet[];
+  beats: Beat[];
+  pageLock: PageLock;
   productionSnapshots: { createdAt: string; reason: string; screenplay: string }[];
 }
 
@@ -110,11 +144,11 @@ export const defaultScreenplaySettings = (): ScreenplaySettings => ({
   continueds: { character: "automatic", dialogueMore: true, dialogueContinued: true, sceneContinued: "off" },
   capitalisation: { sceneHeadings: true, characters: true, transitions: true, shots: true },
   revisions: { enabled: false, activeSetId: null, showMarks: true },
-  pagination: { pageSize: "A4", viewMode: "page" },
+  pagination: { pageSize: "A4", viewMode: "page", sceneHeadingSpacing: 2 },
   exportDefaults: { format: "pdf", includeTitlePage: true, includeSceneNumbers: true, includePageNumbers: true, includeScriptNotes: false, includeRevisionMarks: false, includeOmittedScenes: false },
 });
 
-export const defaultProjectData = (): ProjectData => ({ schemaVersion: 1, screenplaySettings: defaultScreenplaySettings(), scenes: [], productionSnapshots: [] });
+export const defaultProjectData = (): ProjectData => ({ schemaVersion: 1, screenplaySettings: defaultScreenplaySettings(), scenes: [], revisionSets: [], beats: [], pageLock: { locked: false, pageStarts: [] }, productionSnapshots: [] });
 
 export function migrateProjectData(value?: Partial<ProjectData>): ProjectData {
   const defaults = defaultProjectData();
@@ -122,6 +156,9 @@ export function migrateProjectData(value?: Partial<ProjectData>): ProjectData {
   return {
     schemaVersion: 1,
     scenes: Array.isArray(value?.scenes) ? value.scenes : [],
+    revisionSets: Array.isArray(value?.revisionSets) ? value.revisionSets : [],
+    beats: Array.isArray(value?.beats) ? value.beats : [],
+    pageLock: value?.pageLock && Array.isArray(value.pageLock.pageStarts) ? value.pageLock : { locked: false, pageStarts: [] },
     productionSnapshots: Array.isArray(value?.productionSnapshots) ? value.productionSnapshots : [],
     screenplaySettings: {
       ...defaults.screenplaySettings, ...settings,
