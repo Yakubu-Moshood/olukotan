@@ -179,7 +179,7 @@ export function ScriptCompareDialog({ elements, onGo, onMarkRevised, onClose }: 
   </Modal>;
 }
 
-const TOOLBAR_BUTTONS: [string, string][] = [["new", "New"], ["open", "Open"], ["save", "Save"], ["print", "Print"], ["spelling", "Spelling"], ["cut", "Cut"], ["copy", "Copy"], ["paste", "Paste"], ["undo", "Undo"], ["redo", "Redo"], ["format", "Bold / Italic / Underline"], ["element", "Element list"], ["zoom", "Zoom"], ["views", "View buttons"], ["navigator", "Navigator"], ["properties", "Scene Properties"]];
+const TOOLBAR_BUTTONS: [string, string][] = [["new", "New"], ["open", "Open"], ["save", "Save"], ["print", "Print"], ["spelling", "Spelling"], ["cut", "Cut"], ["copy", "Copy"], ["paste", "Paste"], ["undo", "Undo"], ["redo", "Redo"], ["format", "Bold / Italic / Underline"], ["element", "Element list"], ["zoom", "Zoom"], ["views", "View buttons"], ["navigator", "Navigator"], ["properties", "Scene Properties"], ["info", "Script information"], ["help", "Help"]];
 
 /** Tools → Customize…: toolbar buttons, ruler and status bar; full shortcut list. */
 export function CustomizeDialog({ prefs, menus, onSave, onClose }: { prefs: ToolbarPrefs; menus: Menu[]; onSave(prefs: ToolbarPrefs): void; onClose(): void }) {
