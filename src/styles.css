@@ -207,3 +207,6 @@
 .tint-green{color:#2e8b3a}.tint-amber{color:#c98a12}.tint-blue{color:#2f6db5}.tint-red{color:#b8322a}.tint-violet{color:#5b4bb0}.tint-slate{color:#4a4f57}
 .tool .fmt{font:700 15px "Times New Roman",Georgia,serif;color:#1f1e1b}.tool i.fmt{font-weight:400;font-style:italic}.tool u.fmt{font-weight:400}
 .tool-select{height:22px;font-size:12.5px;border-radius:2px;border-color:#b9b6ae}
+
+/* Dialogs never grow past the window: the content scrolls and the buttons stay reachable. */
+.modal{max-height:calc(100vh - 40px);overflow:auto}

@@ -320,7 +320,11 @@ function fountainText(element: ScreenplayElement, dualSecond = false): string {
 function fountainBody(element: ScreenplayElement, dualSecond: boolean): string {
   switch (element.type) {
     case "scene-heading": return `${element.metadata?.sceneId ? `/* OLUKOTAN:SCENE-ID:${element.metadata.sceneId} */\n` : ""}${normalizeElementText(element.type, element.text)}${element.metadata?.sceneNumber ? ` #${element.metadata.sceneNumber}#` : ""}`;
-    case "character": return `${normalizeElementText(element.type, element.text)}${dualSecond ? " ^" : ""}`;
+    case "character": {
+      // Cues Fountain wouldn't recognise on its own (e.g. "EMPLOYEE 1") are forced with "@" so they stay characters.
+      const cue = normalizeElementText(element.type, element.text);
+      return `${isLikelyCharacter(cue) ? "" : "@"}${cue}${dualSecond ? " ^" : ""}`;
+    }
     case "parenthetical": return normalizeElementText(element.type, element.text);
     case "transition": return `>${normalizeElementText(element.type, element.text)}`;
     case "action": return (isSceneHeading(element.text) || isTransition(element.text) || isLikelyCharacter(element.text)) ? `!${element.text}` : element.text;

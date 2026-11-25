@@ -41,6 +41,9 @@ export function ImportDialog({ onClose, onImported, defaultFolder, defaultAuthor
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); setBusy(false); }
   };
 
+  // Only name revision colours the script actually uses; Final Draft lists all 19 by default.
+  const usedRevisionIds = new Set(preview?.document.elements.map((element) => element.metadata?.revisionSet).filter(Boolean));
+  const usedRevisions = (preview?.projectData.revisionSets ?? []).filter((set) => usedRevisionIds.has(set.id)).map((set) => set.name.replace(/\s*\(mm\/dd\/yyyy\)/u, ""));
   return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal import-dialog" role="dialog" aria-modal="true" aria-labelledby="import-title" onMouseDown={(event) => event.stopPropagation()}>
     <button className="icon-button modal-close" onClick={onClose} aria-label="Close"><X size={19}/></button>
     <p className="eyebrow">Import</p><h2 id="import-title">Import a screenplay</h2>
@@ -53,7 +56,7 @@ export function ImportDialog({ onClose, onImported, defaultFolder, defaultAuthor
         <div><dt>Scenes</dt><dd>{preview.stats.scenes}</dd></div>
         <div><dt>Characters</dt><dd>{preview.stats.characters}</dd></div>
         {preview.stats.dualDialogue > 0 && <div><dt>Dual dialogue</dt><dd>{preview.stats.dualDialogue}</dd></div>}
-        {preview.projectData.revisionSets.length > 0 && <div><dt>Revision sets</dt><dd>{preview.projectData.revisionSets.map((set) => set.name).join(", ")}</dd></div>}
+        {usedRevisions.length > 0 && <div><dt>Revisions</dt><dd>{usedRevisions.join(", ")}</dd></div>}
       </dl>
       {preview.sceneHeadings.length > 0 && <ol className="import-scenes">{preview.sceneHeadings.slice(0, 6).map((heading, index) => <li key={index}>{heading}</li>)}{preview.sceneHeadings.length > 6 && <li className="more">…and {preview.sceneHeadings.length - 6} more</li>}</ol>}
       {preview.warnings.map((warning) => <p className="import-warning" key={warning}><AlertTriangle size={14}/> {warning}</p>)}
