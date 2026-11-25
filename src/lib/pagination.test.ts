@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
 import { PDFDocument } from "pdf-lib";
 import { defaultProjectData, type ProjectData } from "../types";
-import { columnWidth, layoutTitlePage, paginate, pageGeometry, pageNumberLabel, parseTitlePage, runsText, serializeTitlePage, styledChars, wrapText } from "./pagination";
+import { columnWidth, layoutTitlePage, titleCreditBlock, paginate, pageGeometry, pageNumberLabel, parseTitlePage, runsText, serializeTitlePage, styledChars, wrapText } from "./pagination";
 import { renderPdf, type FontLoader } from "./pdf-render";
 import { createElement, parseFountain, type ScreenplayDocument } from "./screenplay-elements";
 
@@ -107,6 +107,11 @@ describe("pagination", () => {
 });
 
 describe("title page", () => {
+  it("spaces stacked credits so Story by and Written by read as separate blocks", () => {
+    const block = titleCreditBlock({ credit: "Story by", author: "Jade Osiberu\nWritten by\nYakubu Moshood" });
+    expect(block).toEqual(["Story by", "", "Jade Osiberu", "", "", "Written by", "", "Yakubu Moshood"]);
+    expect(titleCreditBlock({ author: "Yaks" })).toEqual(["written by", "", "Yaks"]);
+  });
   it("parses and re-serialises Fountain title fields", () => {
     const fields = parseTitlePage("Title: ÀBÍKẸ́\nCredit: written by\nAuthor: Yakubu Moshood\nContact:\n    Before Light Media\n    Lagos");
     expect(fields.title).toBe("ÀBÍKẸ́");

@@ -1,6 +1,6 @@
 import type { ProjectData, RevisionSet, SceneMetadata } from "../types";
 import { createElement, parseCharacter, type ScreenplayDocument, type ScreenplayElement, type ScreenplayElementType } from "./screenplay-elements";
-import { serializeTitlePage, styledChars, type TitlePageFields } from "./pagination";
+import { serializeTitlePage, styledChars, titleCreditBlock, type TitlePageFields } from "./pagination";
 
 /**
  * Final Draft (.fdx) import and export.
@@ -294,8 +294,8 @@ export function writeFdx(document: ScreenplayDocument, projectData: ProjectData,
 function writeTitlePage(fields: TitlePageFields): string {
   const p = (text: string, align: "Center" | "Left" | "Right" = "Center") => `<Paragraph Alignment="${align}" FirstIndent="0.00" Leading="Regular" LeftIndent="1.00" RightIndent="7.50" SpaceBefore="0" Spacing="1" StartsNewPage="No"><Text>${escapeXml(text)}</Text></Paragraph>`;
   const blank = (count: number) => Array.from({ length: count }, () => p("")).join("");
-  const lines = [blank(17), ...(fields.title ?? "").split("\n").map((line) => p(line)), blank(1), p(fields.credit ?? "written by"), blank(1),
-    ...(fields.author ?? "").split("\n").filter(Boolean).map((line) => p(line)), ...(fields.source ? [blank(1), ...fields.source.split("\n").map((line) => p(line))] : []),
+  const lines = [blank(17), ...(fields.title ?? "").split("\n").map((line) => p(line)), blank(3),
+    ...titleCreditBlock(fields).map((line) => p(line)),
     blank(16), ...(fields.contact ?? "").split("\n").filter(Boolean).map((line) => p(line, "Left")), ...(fields.draftDate ? fields.draftDate.split("\n").map((line) => p(line, "Right")) : [])];
   return `<TitlePage><Content>${lines.join("")}</Content></TitlePage>`;
 }

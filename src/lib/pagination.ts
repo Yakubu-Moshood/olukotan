@@ -546,6 +546,24 @@ export function serializeTitlePage(fields: TitlePageFields, otherPreamble = ""):
     .filter(Boolean).join("\n");
 }
 
+const CREDIT_LINE = /^(?:(?:original\s+)?(?:story|screenplay|teleplay|script|written|created|developed|adapted|directed|produced)(?:\s+(?:and|&)\s+\w+)?\s+by|by|based on\b.*|from\b.*|and|&)$/iu;
+
+/** Credit and author lines with industry spacing: one blank line between a credit ("Story by") and its names,
+ *  two blank lines before each further credit ("Written by"), so stacked credits read as separate blocks. */
+export function titleCreditBlock(fields: TitlePageFields): string[] {
+  const names = (fields.author ?? "").split("\n").map((text) => text.trim()).filter(Boolean);
+  const items = [fields.credit?.trim() || "written by", ...names];
+  const out: string[] = [];
+  items.forEach((text, index) => {
+    const isCredit = index === 0 || CREDIT_LINE.test(text);
+    if (isCredit && index > 0) out.push("", "");
+    out.push(text);
+    if (isCredit) out.push("");
+  });
+  if (fields.source) out.push("", "", ...fields.source.split("\n"));
+  return out;
+}
+
 export function layoutTitlePage(fields: TitlePageFields, geometry: PageGeometry): PageLayout {
   const lines: LayoutLine[] = [];
   const centre = geometry.widthIn / 2;
@@ -553,10 +571,8 @@ export function layoutTitlePage(fields: TitlePageFields, geometry: PageGeometry)
     lines.push({ row, x, align, runs: [{ text, ...style }], type: "title-page", kind: "title" });
   let row = Math.floor(geometry.linesPerPage * 0.38);
   for (const titleLine of (fields.title ?? "Untitled").split("\n")) line(row++, stripMarkers(titleLine).toLocaleUpperCase("en-GB"), "center", centre, { underline: false, bold: /\*\*/u.test(titleLine) });
-  row += 1;
-  line(row, fields.credit ?? "written by", "center", centre); row += 2;
-  for (const author of (fields.author ?? "").split("\n").filter(Boolean)) line(row++, author, "center", centre);
-  if (fields.source) { row += 1; for (const source of fields.source.split("\n")) line(row++, source, "center", centre); }
+  row += 3;
+  for (const text of titleCreditBlock(fields)) { if (text) line(row, text, "center", centre); row++; }
   const bottom = geometry.linesPerPage - 1;
   const contact = (fields.contact ?? "").split("\n").filter(Boolean);
   contact.forEach((text, index) => line(bottom - contact.length + 1 + index, text, "left", 1.5));
