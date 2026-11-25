@@ -4,3 +4,4 @@ src-tauri/target/
 .vite/
 *.log
 work/
+src-tauri/gen/schemas/
