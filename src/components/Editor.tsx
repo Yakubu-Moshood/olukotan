@@ -1,8 +1,9 @@
 import { ArrowLeft, Bold, ChevronLeft, ChevronRight, Cloud, Command, FileText, FolderOpen, Italic, PanelLeftClose, PanelRightClose, Redo2, Save, Search, Settings, Underline, Undo2, WifiOff } from "lucide-react";
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { wordCount } from "../lib/screenplay";
-import { paginate } from "../lib/pagination";
-import { revisionMarkFor } from "../lib/revisions";
+import { lockPages, paginate } from "../lib/pagination";
+import { applyRevisionMarks, clearRevisionMarks, nextRevisionSet, revisionMarkFor, revisionSetById } from "../lib/revisions";
+import { ReportsDialog } from "./ReportsDialog";
 import { TitlePageDialog } from "./TitlePageDialog";
 import { IndexCards, Navigator } from "./Navigator";
 import { BeatBoard } from "./BeatBoard";
@@ -76,6 +77,9 @@ export function Editor({ project, content, dirty, saving, message, onChange, onP
 
   const commitDocument = (next: ScreenplayDocument, focus?: FocusRequest, record = true, data: ProjectData = projectData) => {
     if (record) { history.current.past.push(cloneDocument(document)); history.current.past = history.current.past.slice(-150); history.current.future = []; }
+    // Revision mode: anything changed by the writer is marked with the active revision set.
+    const revisions = data.screenplaySettings.revisions;
+    if (record && revisions.enabled && revisions.activeSetId && next.elements !== document.elements) next = { ...next, elements: applyRevisionMarks(document.elements, next.elements, revisions.activeSetId) };
     const prepared = synchroniseSceneMetadata(next, data);
     setDocument(prepared.document); setProjectData(prepared.projectData); onProjectDataChange(prepared.projectData);
     if (focus) { setActiveIndex(focus.index); focusRequest.current = focus; }
@@ -102,6 +106,7 @@ export function Editor({ project, content, dirty, saving, message, onChange, onP
   const fountain = useMemo(() => serializeFountain(document), [document]);
   const deferredDocument = useDeferredValue(document);
   const layout = useMemo(() => paginate(deferredDocument, projectData, {
+    lockedPages: projectData.pageLock.locked ? projectData.pageLock.pageStarts : undefined,
     sceneNumber: (element) => projectData.scenes.find((scene) => scene.sceneId === element.metadata?.sceneId)?.number,
     revisionMark: (element) => revisionMarkFor(element, projectData),
   }), [deferredDocument, projectData]);
@@ -279,6 +284,46 @@ export function Editor({ project, content, dirty, saving, message, onChange, onP
   const unlockSceneNumbers = () => { if (!window.confirm("Unlocking scene numbers may allow later renumbering to change existing production references. Continue?")) return; const data = { ...projectData, screenplaySettings: { ...projectData.screenplaySettings, sceneNumbers: { ...projectData.screenplaySettings.sceneNumbers, mode: "manual" as const } }, scenes: projectData.scenes.map((scene) => ({ ...scene, locked: false, numberingMode: "manual" as const })) }; commitDocument(document, { index: activeIndex, cursor: active?.text.length ?? 0 }, true, data); setProductionMenuOpen(false); };
   const setCurrentSceneNumber = () => { if (!activeScene) return; const requested = window.prompt("Set scene number:", sceneNumberFor(activeScene) ?? ""); if (requested === null) return; const value = requested.trim().toLocaleUpperCase("en-GB"); if (!/^\d+[A-Z]*$/u.test(value)) { window.alert("Use a number with an optional letter suffix, such as 14A."); return; } if (projectData.scenes.some((scene) => scene.sceneId !== activeScene.metadata?.sceneId && scene.number === value)) { window.alert(`Scene number ${value} is already in use.`); return; } const data = { ...projectData, screenplaySettings: { ...projectData.screenplaySettings, sceneNumbers: { ...projectData.screenplaySettings.sceneNumbers, enabled: true, mode: "manual" as const } }, scenes: projectData.scenes.map((scene) => scene.sceneId === activeScene.metadata?.sceneId ? { ...scene, number: value, locked: false, numberingMode: "manual" as const } : scene) }; commitDocument(document, { index: activeIndex, cursor: active?.text.length ?? 0 }, true, data); setProductionMenuOpen(false); };
   const activeSceneNumber = activeScene ? displaySceneNumber(activeScene, projectData) : undefined;
+  const [reportsOpen, setReportsOpen] = useState(false);
+  const revisionSettings = projectData.screenplaySettings.revisions;
+  const activeRevision = revisionSetById(projectData, revisionSettings.activeSetId);
+  const keepFocus = () => ({ index: activeIndex, cursor: active?.text.length ?? 0 });
+  const withSettings = (patch: Partial<ScreenplaySettings>, data: ProjectData = projectData): ProjectData => ({ ...data, screenplaySettings: { ...data.screenplaySettings, ...patch } });
+  const toggleRevisionMode = () => {
+    let data = projectData;
+    if (!revisionSettings.enabled && !activeRevision) { const set = nextRevisionSet(data.revisionSets); data = { ...data, revisionSets: [...data.revisionSets, set] }; data = withSettings({ revisions: { ...revisionSettings, activeSetId: set.id } }, data); }
+    data = withSettings({ revisions: { ...data.screenplaySettings.revisions, enabled: !revisionSettings.enabled } }, data);
+    commitDocument(document, keepFocus(), false, data); setProductionMenuOpen(false);
+  };
+  const newRevisionSet = () => {
+    const suggestion = nextRevisionSet(projectData.revisionSets);
+    const name = window.prompt("Name of the new revision set:", suggestion.name); if (name === null) return;
+    const set = { ...suggestion, name: name.trim() || suggestion.name };
+    commitDocument(document, keepFocus(), false, withSettings({ revisions: { ...revisionSettings, enabled: true, activeSetId: set.id } }, { ...projectData, revisionSets: [...projectData.revisionSets, set] }));
+    setProductionMenuOpen(false);
+  };
+  const clearMarks = () => {
+    if (!window.confirm(activeRevision ? `Clear all revision marks? (This removes marks from every set, including ${activeRevision.name}.)` : "Clear all revision marks?")) return;
+    commitDocument({ ...document, elements: clearRevisionMarks(document.elements) }, keepFocus(), false); setProductionMenuOpen(false);
+  };
+  const togglePageLock = () => {
+    if (projectData.pageLock.locked) {
+      if (!window.confirm("Unlock pages? The script will reflow and A-pages will be renumbered. Issued page numbers will no longer match.")) return;
+      commitDocument(document, keepFocus(), true, { ...projectData, pageLock: { locked: false, pageStarts: [] } });
+    } else {
+      const unlocked = paginate(document, projectData, { sceneNumber: (element) => projectData.scenes.find((scene) => scene.sceneId === element.metadata?.sceneId)?.number });
+      commitDocument(document, keepFocus(), true, { ...projectData, pageLock: { locked: true, lockedAt: new Date().toISOString(), pageStarts: lockPages(unlocked) } });
+    }
+    setProductionMenuOpen(false);
+  };
+  const activeSceneMeta = activeScene ? projectData.scenes.find((scene) => scene.sceneId === activeScene.metadata?.sceneId) : undefined;
+  const toggleOmitScene = () => {
+    if (!activeSceneMeta) return;
+    const omitted = !activeSceneMeta.omitted;
+    if (omitted && !window.confirm("Omit this scene? It will print as OMITTED with its scene number kept. Its text stays in the project and can be restored.")) return;
+    const scenes = projectData.scenes.map((scene) => scene.sceneId === activeSceneMeta.sceneId ? { ...scene, omitted, status: omitted ? "Omitted" as const : "Draft" as const } : scene);
+    commitDocument(document, keepFocus(), true, { ...projectData, scenes }); setProductionMenuOpen(false);
+  };
 
   return <div className="studio" onClick={() => contextMenu && setContextMenu(null)}>
     <header className="app-bar"><div className="app-left"><button className="icon-button" onClick={onHome} aria-label="Back to home"><ArrowLeft size={19}/></button><span className="mini-wordmark">OLUKOTAN</span><span className="divider"/><div><strong>{project.manifest.title}</strong><small>{dirty ? "Unsaved changes" : message || "Saved locally"}</small></div></div>
@@ -290,7 +335,10 @@ export function Editor({ project, content, dirty, saving, message, onChange, onP
     <main className="writing-area"><div className="editor-toolbar">
       <div className="view-switch" role="tablist" aria-label="View">{([["script", "Script"], ["cards", "Index Cards"], ["beats", "Beat Board"]] as const).map(([value, label]) => <button key={value} role="tab" aria-selected={view === value} className={view === value ? "active" : ""} onClick={() => setView(value)}>{label}</button>)}</div>
       <div className="menu-control"><button onClick={() => { setFileMenuOpen((open) => !open); setProductionMenuOpen(false); }}>File</button>{fileMenuOpen && <div className="app-menu" role="menu"><button role="menuitem" onClick={() => { setTitlePageOpen(true); setFileMenuOpen(false); }}>Title Page…</button><button role="menuitem" onClick={() => { setExportOpen(true); setFileMenuOpen(false); }}>Export…</button><button role="menuitem" onClick={() => { setExportOpen(true); setFileMenuOpen(false); }}>Export As…</button><button role="menuitem" onClick={() => { setExportOpen(true); setFileMenuOpen(false); }}>Save Copy As…</button></div>}</div>
-      <div className="menu-control"><button onClick={() => { setProductionMenuOpen((open) => !open); setFileMenuOpen(false); }}>Production</button>{productionMenuOpen && <div className="app-menu" role="menu"><button role="menuitem" disabled={!scenes.length} onClick={numberScenes}>Number Scenes…</button><button role="menuitem" disabled={!projectData.scenes.some((scene) => scene.number)} onClick={removeNumbers}>Remove Scene Numbers…</button><button role="menuitem" disabled={!scenes.length} onClick={renumberScenes}>Renumber Scenes…</button><button role="menuitem" disabled={!projectData.scenes.some((scene) => scene.number) || projectData.screenplaySettings.sceneNumbers.mode === "locked"} onClick={lockSceneNumbers}>Lock Scene Numbers</button><button role="menuitem" disabled={projectData.screenplaySettings.sceneNumbers.mode !== "locked"} onClick={unlockSceneNumbers}>Unlock Scene Numbers</button><button role="menuitem" disabled={!activeScene} onClick={setCurrentSceneNumber}>Set Current Scene Number…</button></div>}</div>
+      <div className="menu-control"><button onClick={() => { setProductionMenuOpen((open) => !open); setFileMenuOpen(false); }}>Production</button>{productionMenuOpen && <div className="app-menu" role="menu"><button role="menuitem" disabled={!scenes.length} onClick={numberScenes}>Number Scenes…</button><button role="menuitem" disabled={!projectData.scenes.some((scene) => scene.number)} onClick={removeNumbers}>Remove Scene Numbers…</button><button role="menuitem" disabled={!scenes.length} onClick={renumberScenes}>Renumber Scenes…</button><button role="menuitem" disabled={!projectData.scenes.some((scene) => scene.number) || projectData.screenplaySettings.sceneNumbers.mode === "locked"} onClick={lockSceneNumbers}>Lock Scene Numbers</button><button role="menuitem" disabled={projectData.screenplaySettings.sceneNumbers.mode !== "locked"} onClick={unlockSceneNumbers}>Unlock Scene Numbers</button><button role="menuitem" disabled={!activeScene} onClick={setCurrentSceneNumber}>Set Current Scene Number…</button><button role="menuitem" disabled={!activeSceneMeta} onClick={toggleOmitScene}>{activeSceneMeta?.omitted ? "Restore Omitted Scene" : "Omit Scene…"}</button>
+        <hr/><button role="menuitem" className={revisionSettings.enabled ? "menu-check" : ""} onClick={toggleRevisionMode}>Revision Mode</button><button role="menuitem" onClick={newRevisionSet}>New Revision Set…</button><button role="menuitem" disabled={!document.elements.some((element) => element.metadata?.revisionSet)} onClick={clearMarks}>Clear Revision Marks…</button>
+        <hr/><button role="menuitem" className={projectData.pageLock.locked ? "menu-check" : ""} onClick={togglePageLock}>{projectData.pageLock.locked ? "Unlock Pages…" : "Lock Pages"}</button>
+        <hr/><button role="menuitem" onClick={() => { setReportsOpen(true); setProductionMenuOpen(false); }}>Reports…</button></div>}</div>
       <select aria-label="Screenplay element" value={active?.type ?? "action"} onChange={(event) => changeType(event.target.value as ScreenplayElementType)}>{SELECTABLE_TYPES.map((type) => <option key={type} value={type}>{ELEMENT_LABELS[type]}</option>)}</select>
       <button className="icon-button" aria-label="Bold" onClick={() => wrapSelection("**")}><Bold size={16}/></button><button className="icon-button" aria-label="Italic" onClick={() => wrapSelection("*")}><Italic size={16}/></button><button className="icon-button" aria-label="Underline" onClick={() => wrapSelection("_")}><Underline size={16}/></button>
       <button className="icon-button" aria-label="Undo" onClick={undo} disabled={!history.current.past.length}><Undo2 size={16}/></button><button className="icon-button" aria-label="Redo" onClick={redo} disabled={!history.current.future.length}><Redo2 size={16}/></button><button className="icon-button" aria-label="Command palette" onClick={() => setPaletteOpen(true)}><Command size={16}/></button>
@@ -318,10 +366,11 @@ export function Editor({ project, content, dirty, saving, message, onChange, onP
     <aside className="right-sidebar"><div className="panel-heading"><span>Project</span><button className="icon-button" aria-label="Collapse project inspector"><PanelRightClose size={17}/></button></div><div className="inspector-section"><p className="eyebrow">Document</p><h3><FileText size={17}/> Screenplay</h3><dl><div><dt>Active element</dt><dd>{active ? ELEMENT_LABELS[active.type] : "—"}</dd></div><div><dt>Format</dt><dd>Structured Fountain</dd></div><div><dt>Page size</dt><dd>{project.manifest.pageSize}</dd></div><div><dt>Scenes</dt><dd>{scenes.length}</dd></div><div><dt>Words</dt><dd>{wordCount(fountain).toLocaleString()}</dd></div></dl><p className="pagination-note">Pages match the printed PDF: Courier 12 pt, {projectData.screenplaySettings.pagination.pageSize}, {layout.geometry.linesPerPage} lines per page.</p></div>
       <div className="ownership-note"><Cloud size={19}/><strong>Stored on your device</strong><p>{project.projectPath}</p></div>
     </aside>
-    <footer className="status-bar"><span>{message || (dirty ? "Editing" : "All changes saved")}</span><span>{activeSceneNumber ? `Scene ${activeSceneNumber} · ` : ""}{active ? ELEMENT_LABELS[active.type] : ""} · {wordCount(fountain).toLocaleString()} words · Page {activePage} of {pages} · UTF-8</span></footer>
+    <footer className="status-bar"><span>{message || (dirty ? "Editing" : "All changes saved")}{revisionSettings.enabled && activeRevision && <> · <span className="revision-badge" style={{ background: activeRevision.colour }}>Revising: {activeRevision.name}</span></>}{projectData.pageLock.locked && " · Pages locked"}</span><span>{activeSceneNumber ? `Scene ${activeSceneNumber} · ` : ""}{active ? ELEMENT_LABELS[active.type] : ""} · {wordCount(fountain).toLocaleString()} words · Page {activePage} of {pages} · UTF-8</span></footer>
     {contextMenu && <div className="element-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} role="menu" onClick={(event) => event.stopPropagation()}>{active?.type === "scene-heading" && <button role="menuitem" onClick={setCurrentSceneNumber}>Set Scene Number…</button>}{SELECTABLE_TYPES.map((type) => <button role="menuitem" key={type} onClick={() => changeType(type)}>{ELEMENT_LABELS[type]} <kbd>Ctrl+{Object.entries(SHORTCUT_TYPES).find(([, value]) => value === type)?.[0] ?? ""}</kbd></button>)}</div>}
     {paletteOpen && <div className="command-palette-backdrop" onMouseDown={() => setPaletteOpen(false)}><div className="command-palette" role="dialog" aria-label="Element command palette" onMouseDown={(event) => event.stopPropagation()}><h2>Change screenplay element</h2>{SELECTABLE_TYPES.map((type) => <button key={type} onClick={() => changeType(type)}><span>{ELEMENT_LABELS[type]}</span><kbd>Ctrl+{Object.entries(SHORTCUT_TYPES).find(([, value]) => value === type)?.[0] ?? ""}</kbd></button>)}</div></div>}
     {screenplaySettingsOpen && <ScreenplaySettingsDialog initial={projectData.screenplaySettings} onClose={() => setScreenplaySettingsOpen(false)} onSave={saveScreenplaySettings}/>} 
+    {reportsOpen && <ReportsDialog title={project.manifest.title} document={document} projectData={projectData} layout={layout} onClose={() => setReportsOpen(false)}/>}
     {titlePageOpen && <TitlePageDialog preamble={document.preamble} fallbackTitle={project.manifest.title} fallbackAuthor={project.manifest.author} onClose={() => setTitlePageOpen(false)} onSave={(preamble) => { commitDocument({ ...document, preamble }, { index: activeIndex, cursor: active?.text.length ?? 0 }); setTitlePageOpen(false); }}/>}
     {exportOpen && <ExportDialog project={project} document={document} projectData={projectData} onClose={() => setExportOpen(false)} onExported={onExported}/>} 
   </div>;

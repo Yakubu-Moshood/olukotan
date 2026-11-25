@@ -1,4 +1,4 @@
-import type { ProjectData, ScreenplaySettings } from "../types";
+import type { LockedPageStart, ProjectData, ScreenplaySettings } from "../types";
 import { parseCharacter, type ScreenplayDocument, type ScreenplayElement, type ScreenplayElementType } from "./screenplay-elements";
 import { renderedCharacterCue } from "./screenplay-production";
 
@@ -159,7 +159,7 @@ const endsSentence = (runs: TextRun[]) => /[.!?…]["'”’)]*$|--$|—$/u.test
 // Blocks
 // ---------------------------------------------------------------------------
 
-interface BlockLine { element: ScreenplayElement; runs: TextRun[]; type: ScreenplayElementType; x: number; align: "left" | "right"; kind: LineKind; sceneNumber?: string; revisionMark?: string }
+interface BlockLine { element: ScreenplayElement; lineIndex: number; runs: TextRun[]; type: ScreenplayElementType; x: number; align: "left" | "right"; kind: LineKind; sceneNumber?: string; revisionMark?: string }
 
 interface Block {
   kind: "single" | "dialogue" | "dual" | "page-break";
@@ -171,9 +171,13 @@ interface Block {
   columns?: [(BlockLine | null)[], (BlockLine | null)[]];
   sceneId?: string;
   characterName?: string;
+  /** Print (MORE) after this block (the head of a speech split at a locked page). */
+  moreAfter?: boolean;
 }
 
 export interface PaginationOptions {
+  /** Locked page starts: pages begin exactly here; overflow becomes A-pages. */
+  lockedPages?: LockedPageStart[];
   includeNotes?: boolean;
   includeOmitted?: boolean;
   sceneNumber?(element: ScreenplayElement): string | undefined;
@@ -187,7 +191,7 @@ function elementLines(element: ScreenplayElement, text: string, options: Paginat
   const sceneNumber = type === "scene-heading" ? options.sceneNumber?.(element) : undefined;
   const revisionMark = options.revisionMark?.(element);
   return wrapped.map((runs, index) => ({
-    element, runs, type, x: spec.align === "right" ? spec.right : spec.left, align: spec.align, kind: "body" as const,
+    element, lineIndex: index, runs, type, x: spec.align === "right" ? spec.right : spec.left, align: spec.align, kind: "body" as const,
     ...(index === 0 && sceneNumber ? { sceneNumber } : {}), ...(revisionMark ? { revisionMark } : {}),
   }));
 }
@@ -260,12 +264,25 @@ export function paginate(document: ScreenplayDocument, projectData: ProjectData,
   const capacity = geometry.linesPerPage - (sceneContinued !== "off" ? 1 : 0);
   const pages: PageLayout[] = [];
   const elementPage = new Map<string, number>();
+  const continuedCount = new Map<string, number>();
+  const locks = new Map((options.lockedPages ?? []).map((lock) => [`${lock.elementId}:${lock.line}`, lock.label]));
+  let lockBase: string | undefined, lockSuffix = 0;
   let page: PageLayout = newPage(1);
   let row = 0;
   let activeScene: string | undefined;
-  let continuedCount = new Map<string, number>();
 
-  function newPage(index: number): PageLayout { return { index, label: String(index), lines: [], elementIds: [] }; }
+  function newPage(index: number): PageLayout {
+    const label = lockBase === undefined ? String(index) : `${lockBase}${suffixLetters(++lockSuffix)}`;
+    return { index, label, lines: [], elementIds: [] };
+  }
+  /** Starts the page a locked start belongs to, labelling it with its locked number. */
+  function lockedBreak(label: string, midScene: boolean, more?: BlockLine) {
+    if (row > 0 || page.lines.length) {
+      if (more) { row = Math.min(row, capacity - 1); place({ ...more, runs: [{ text: "(MORE)" }], kind: "more", type: "character", x: ELEMENT_SPECS.character.left, align: "left" }); }
+      breakPage(midScene);
+    }
+    page.label = label; lockBase = label; lockSuffix = 0;
+  }
 
   function place(line: BlockLine | null) {
     if (line) {
@@ -297,6 +314,23 @@ export function paginate(document: ScreenplayDocument, projectData: ProjectData,
   for (let b = 0; b < blocks.length; b++) {
     const block = blocks[b];
     if (block.kind === "page-break") { if (row > 0) breakPage(false); continue; }
+    if (locks.size) {
+      const at = block.kind === "dual" ? -1 : block.lines.findIndex((line) => line && locks.has(`${line.element.id}:${line.lineIndex}`));
+      if (at > 0) {
+        // A locked page begins inside this block: split it there.
+        const head: Block = { ...block, lines: block.lines.slice(0, at), moreAfter: block.kind === "dialogue" };
+        const cue = block.lines[0] as BlockLine;
+        const tailLines = block.lines.slice(at);
+        const tail: Block = { ...block, before: 0, lines: block.kind === "dialogue" ? [{ ...cue, runs: [{ text: continuedCue(runsText(cue.runs)) }], kind: "contd-cue", lineIndex: -1 }, ...tailLines] : tailLines };
+        blocks.splice(b, 1, head, tail); b--; continue;
+      }
+      const first = (block.kind === "dual" ? block.columns![0][0] : block.lines.find((line) => line && line.kind !== "contd-cue")) as BlockLine | undefined;
+      const label = first && first.lineIndex >= 0 ? locks.get(`${first.element.id}:${first.lineIndex}`) : undefined;
+      if (label !== undefined && (label !== page.label || page.lines.length)) {
+        const previous = blocks[b - 1];
+        lockedBreak(label, block.type !== "scene-heading", previous?.moreAfter ? previous.lines[0] as BlockLine : undefined);
+      }
+    }
     if (block.type === "scene-heading") { activeScene = block.sceneId ?? `scene-${b}`; }
     const before = row === 0 || (sceneContinued === "top-and-bottom" && row === 2 && page.lines.some((l) => l.kind === "scene-continued-top")) ? 0 : block.before;
 
@@ -325,7 +359,11 @@ export function paginate(document: ScreenplayDocument, projectData: ProjectData,
       keep = next.before + Math.min(next.kind === "dialogue" ? 3 : 2, nextLines);
     }
 
-    if (need + keep <= remaining()) { row += before; lines.forEach(place); continue; }
+    if (need + keep <= remaining() || (block.moreAfter && need + 1 <= remaining())) {
+      row += before; lines.forEach(place);
+      if (block.moreAfter) place({ ...(lines[0] as BlockLine), runs: [{ text: "(MORE)" }], kind: "more", type: "character", x: ELEMENT_SPECS.character.left, align: "left" });
+      continue;
+    }
 
     // Splittable blocks: action/general paragraphs and dialogue.
     const available = remaining() - before;
@@ -364,7 +402,42 @@ export function paginate(document: ScreenplayDocument, projectData: ProjectData,
     lines.forEach(place);
   }
   if (page.lines.length || !pages.length) pages.push(page);
+  if (options.lockedPages?.length) combineMissingLockedLabels(pages, options.lockedPages);
   return { geometry, pages, elementPage };
+}
+
+/** A, B, … Z, AA, AB … */
+export function suffixLetters(n: number): string {
+  let out = ""; while (n > 0) { n--; out = String.fromCharCode(65 + (n % 26)) + out; n = Math.floor(n / 26); } return out;
+}
+
+/** When locked pages lose all their material, the previous page carries a range label such as "12-13". */
+function combineMissingLockedLabels(pages: PageLayout[], locked: LockedPageStart[]) {
+  const present = new Set(pages.map((page) => page.label));
+  const order = locked.map((lock) => lock.label);
+  for (let i = 0; i < order.length; i++) {
+    if (present.has(order[i])) continue;
+    let j = i; while (j + 1 < order.length && !present.has(order[j + 1])) j++;
+    const previous = pages.find((page) => page.label === order[i - 1]) ?? pages.find((page) => page.label.startsWith(`${order[i - 1]}`));
+    if (previous && i > 0) { previous.label = `${order[i - 1]}-${order[j]}`; present.add(previous.label); }
+    i = j;
+  }
+}
+
+/** Captures the current page starts so later edits create A-pages instead of reflowing. */
+export function lockPages(layout: Layout): LockedPageStart[] {
+  const starts: LockedPageStart[] = [];
+  const lineCounters = new Map<string, number>();
+  for (const page of layout.pages) {
+    let start: LockedPageStart | undefined;
+    for (const line of page.lines) {
+      if (!line.elementId || line.kind !== "body") continue;
+      const index = lineCounters.get(line.elementId) ?? 0; lineCounters.set(line.elementId, index + 1);
+      if (!start) start = { elementId: line.elementId, line: index, label: page.label };
+    }
+    if (start) starts.push(start);
+  }
+  return starts;
 }
 
 /** Appends (CONT'D) to a character cue unless it already carries one. */

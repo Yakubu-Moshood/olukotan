@@ -119,12 +119,20 @@ export interface Beat {
   sceneIds?: string[];
 }
 
+export interface LockedPageStart {
+  /** Element whose line begins the page. */
+  elementId: string;
+  /** Wrapped-line index within that element where the page begins (0 = start of element). */
+  line: number;
+  label: string;
+}
+
 export interface PageLock {
   /** True once pages are locked; new material then creates A-pages. */
   locked: boolean;
   lockedAt?: string;
-  /** Element id that starts each locked page, in page order. */
-  pageStarts: string[];
+  /** Where each locked page began, in page order. */
+  pageStarts: LockedPageStart[];
 }
 
 export interface ProjectData {

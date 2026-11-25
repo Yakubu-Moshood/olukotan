@@ -97,6 +97,7 @@ const docxExporter: Exporter = { format: "docx", extension: "docx", async export
 
 export function layoutForExport(context: ExportContext): Layout {
   const layout = paginate(context.document, context.projectData, {
+    lockedPages: context.projectData.pageLock.locked ? context.projectData.pageLock.pageStarts : undefined,
     includeNotes: context.options.includeScriptNotes, includeOmitted: context.options.includeOmittedScenes,
     sceneNumber: (element) => sceneNumber(element, context.projectData),
     revisionMark: (element) => revisionMarkFor(element, context.projectData),

@@ -149,3 +149,51 @@ describe("fountain title page parsing", () => {
     expect(parsed.elements[0]).toMatchObject({ type: "transition", text: "FADE IN:" });
   });
 });
+
+describe("locked pages", () => {
+  const scene = (n: number) => `INT. ROOM ${n} - DAY\n\n${Array.from({ length: 6 }, (_, i) => `Action beat ${n}.${i} happens here and fills a line or two of the page.`).join("\n\n")}\n\nADA\n${longSpeech(6)}\n\n`;
+  const build = () => parseFountain(Array.from({ length: 12 }, (_, i) => scene(i + 1)).join(""));
+
+  it("reproduces the same pages and labels when nothing changed", async () => {
+    const { lockPages } = await import("./pagination");
+    const document = build(); const data = letter();
+    const before = paginate(document, data);
+    const locked = paginate(document, data, { lockedPages: lockPages(before) });
+    expect(locked.pages.map((page) => page.label)).toEqual(before.pages.map((page) => page.label));
+    expect(locked.pages.map((page) => page.lines.length)).toEqual(before.pages.map((page) => page.lines.length));
+  });
+
+  it("creates A-pages for added material without moving later pages", async () => {
+    const { lockPages } = await import("./pagination");
+    const document = build(); const data = letter();
+    const before = paginate(document, data); const lockedPages = lockPages(before);
+    // Insert a lot of new material on page 2.
+    const anchor = before.pages[1].elementIds[1];
+    const at = document.elements.findIndex((element) => element.id === anchor);
+    const inserted = Array.from({ length: 30 }, (_, i) => createElement("action", `New material ${i}.`));
+    const edited = { ...document, elements: [...document.elements.slice(0, at + 1), ...inserted, ...document.elements.slice(at + 1)] };
+    const after = paginate(edited, data, { lockedPages });
+    const labels = after.pages.map((page) => page.label);
+    expect(labels.slice(0, 3)).toEqual(["1", "2", "2A"]);
+    expect(labels).toContain("3");
+    // Page 3 starts exactly where it did before.
+    const three = after.pages.find((page) => page.label === "3")!;
+    expect(three.elementIds[0]).toBe(before.pages[2].elementIds[0]);
+  });
+
+  it("labels the surviving page with a range when locked pages are emptied", async () => {
+    const { lockPages } = await import("./pagination");
+    const document = build(); const data = letter();
+    const before = paginate(document, data); const lockedPages = lockPages(before);
+    const remove = new Set([...before.pages[2].elementIds, ...before.pages[3].elementIds].filter((id) => !before.pages[1].elementIds.includes(id) && !before.pages[4].elementIds.includes(id)));
+    const edited = { ...document, elements: document.elements.filter((element) => !remove.has(element.id)) };
+    const labels = paginate(edited, data, { lockedPages }).pages.map((page) => page.label);
+    expect(labels).toContain("2-4");
+    expect(labels).toContain("5");
+  });
+
+  it("generates A, B … Z, AA suffixes", async () => {
+    const { suffixLetters } = await import("./pagination");
+    expect([1, 2, 26, 27].map(suffixLetters)).toEqual(["A", "B", "Z", "AA"]);
+  });
+});
