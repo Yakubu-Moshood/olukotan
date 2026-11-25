@@ -89,3 +89,10 @@ export async function toggleFullscreen(): Promise<void> {
   if (isTauri) { const { getCurrentWindow } = await import("@tauri-apps/api/window"); const win = getCurrentWindow(); await win.setFullscreen(!(await win.isFullscreen())); return; }
   if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen();
 }
+
+/** Sets the window's title bar text (desktop) and the document title (web). */
+export async function setWindowTitle(title: string): Promise<void> {
+  document.title = title;
+  if (!isTauri) return;
+  try { const { getCurrentWindow } = await import("@tauri-apps/api/window"); await getCurrentWindow().setTitle(title); } catch { /* title is cosmetic */ }
+}

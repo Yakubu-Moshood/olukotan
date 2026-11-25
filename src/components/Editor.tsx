@@ -34,7 +34,7 @@ import { findAll, nextMatch, replaceAll, replaceMatch, type FindOptions } from "
 import { exportScreenplay } from "../lib/exporters";
 import { backupArchive, backupFileName } from "../lib/backup";
 import { printPdf } from "../lib/print";
-import { closeAppWindow, openExternal, platform, saveFileAs, toggleFullscreen } from "../platform";
+import { closeAppWindow, openExternal, platform, saveFileAs, setWindowTitle, toggleFullscreen } from "../platform";
 import type { Stationery } from "../lib/stationery";
 import { CollabSession, applyPatch, diffElements, sessionCode, type ChatMessage, type CollabMessage, type Participant } from "../lib/collab";
 import type { SpeechLine } from "../lib/speech";
@@ -595,6 +595,10 @@ export function Editor(props: EditorProps) {
   useEffect(() => { if (props.joinCode && !joinStarted.current) { joinStarted.current = true; void startSession(false, props.joinCode); } return () => { void session.current?.leave(); }; }, []);
   useEffect(() => { if (collab?.status === "connected") session.current?.shareCursor(active?.id); }, [active?.id, collab?.status]);
 
+  // Window title like a classic desktop app: "Olukotan - [Title]", * when unsaved.
+  useEffect(() => { void setWindowTitle(`Olukotan - [${project.manifest.title}]${dirty ? " *" : ""}`); }, [project.manifest.title, dirty]);
+  useEffect(() => () => { void setWindowTitle("Olukotan"); }, []);
+
   // ---- Menus ----
   const [a0, b0] = selectionRange();
   const hasTextSelection = () => { const handle = activeHandle(); return !!handle && handle.selectionStart !== handle.selectionEnd; };
@@ -834,7 +838,7 @@ export function Editor(props: EditorProps) {
   return <div className={`studio fd-studio ${focusMode ? "focus-mode" : ""}`} onClick={() => contextMenu && setContextMenu(null)}>
     <header className="fd-menubar-row">
       <MenuBar menus={menus}/>
-      <div className="fd-title"><strong>{project.manifest.title}</strong><small>{notice ? "" : dirty ? (saving ? "Saving…" : "Unsaved changes") : message || "Saved"}</small>{collab && <span className={`collab-pill ${collab.status}`} onClick={() => setCollabPanel(true)}>{participants.length || 1} co-writing</span>}</div>
+      {collab && <span className={`collab-pill ${collab.status}`} onClick={() => setCollabPanel(true)}>{participants.length || 1} co-writing</span>}
     </header>
     {showChrome && toolbarPrefs.showToolbar && <Toolbar hidden={toolbarPrefs.hidden} activeType={active?.type ?? "action"} zoom={zoom} canUndo={!!history.current.past.length} canRedo={!!history.current.future.length} canSave={dirty && !saving && !project.readOnly}
       view={pageView ? "page" : "normal"} split={split} navigator={showNavigator} properties={showProperties}
@@ -856,7 +860,7 @@ export function Editor(props: EditorProps) {
         onChat={(text) => { const sent = session.current?.chat(text); if (sent) setChat((list) => [...list, sent]); }} onLeave={() => void leaveSession()} onClose={() => setCollabPanel(false)}/>}
     </div>
     {showChrome && toolbarPrefs.showStatusBar && <StatusBar hint={notice || hint} scene={activeSceneNumber ? `Scene ${activeSceneNumber}` : activeScene ? "Scene" : "No Scene"} page={pageLabel(activePage)} pages={pages} element={active ? ELEMENT_LABELS[active.type] : ""} caps={keys.caps} num={keys.num}
-      extra={<>{revisionSettings.enabled && activeRevision && <span className="revision-badge" style={{ background: activeRevision.colour }}>Revising: {activeRevision.name}</span>}{projectData.pageLock.locked && <span className="lock-badge">Pages locked</span>}<span className="sb-words">{wordCount(visibleText(fountain)).toLocaleString()} words</span></>}/>}
+      extra={<><span className="sb-save">{saving ? "Saving…" : dirty ? "Unsaved changes" : message || "Saved"}</span>{revisionSettings.enabled && activeRevision && <span className="revision-badge" style={{ background: activeRevision.colour }}>Revising: {activeRevision.name}</span>}{projectData.pageLock.locked && <span className="lock-badge">Pages locked</span>}<span className="sb-words">{wordCount(visibleText(fountain)).toLocaleString()} words</span></>}/>}
 
     {contextMenu && <div className="element-context-menu" style={{ left: Math.max(8, Math.min(contextMenu.x, window.innerWidth - 230)), top: Math.max(8, Math.min(contextMenu.y, window.innerHeight - 640)), maxHeight: "calc(100vh - 16px)", overflowY: "auto" }} role="menu" onMouseDown={(event) => event.preventDefault()} onClick={(event) => event.stopPropagation()}>
       <button role="menuitem" onClick={() => void clipboardAction("cut")} disabled={project.readOnly}>Cut <kbd>Ctrl+X</kbd></button><button role="menuitem" onClick={() => void clipboardAction("copy")}>Copy <kbd>Ctrl+C</kbd></button><button role="menuitem" onClick={() => void clipboardAction("paste")} disabled={project.readOnly}>Paste <kbd>Ctrl+V</kbd></button><button role="menuitem" onClick={() => void clipboardAction("selectAll")}>Select All <kbd>Ctrl+A</kbd></button>
