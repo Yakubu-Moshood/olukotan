@@ -15,7 +15,7 @@ export function Home({ recents, onCreate, onImport, onOpen, onOpenRecent, onRemo
       <div className="hero-actions"><button className="primary large" onClick={onCreate}><FilePlus2 size={19}/> Create new project</button><button className="secondary large" onClick={onOpen}><FolderOpen size={19}/> {webMode ? "Open or sync project" : "Open project"}</button></div>
     </section>
     <section className="quick-grid">
-      <button className="quick-card" onClick={onImport}><Import/><span><strong>Import a screenplay</strong><small>Final Draft (.fdx) or Fountain</small></span></button>
+      <button className="quick-card" onClick={onImport}><Import/><span><strong>Import a screenplay</strong><small>Final Draft, Word, PDF or Fountain</small></span></button>
       <button className="quick-card" disabled><RotateCcw/><span><strong>Recover unsaved work</strong><small>Recovery is offered when a project opens</small></span></button>
       <button className="quick-card" disabled><HelpCircle/><span><strong>Help and guides</strong><small>Read the included documentation</small></span></button>
     </section>

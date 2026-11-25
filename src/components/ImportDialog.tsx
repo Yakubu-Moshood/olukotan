@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { AlertTriangle, FileUp, FolderOpen, X } from "lucide-react";
 import { platform } from "../platform";
-import { importScreenplayFile, importedFountain, type ImportPreview } from "../lib/importers";
+import { IMPORT_ACCEPT, importScreenplayBytes, importedFountain, type ImportPreview } from "../lib/importers";
 import type { ProjectPayload } from "../types";
 
 /** Guided import: choose a file, preview what was recognised, then create a new project from it. */
@@ -15,15 +15,18 @@ export function ImportDialog({ onClose, onImported, defaultFolder, defaultAuthor
   const [folder, setFolder] = useState(defaultFolder);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [reading, setReading] = useState(false);
   const webMode = platform.kind === "web";
 
   const read = async (file?: File) => {
     if (!file) return;
     setError(""); setPreview(null);
     try {
-      const result = importScreenplayFile(file.name, await file.text());
+      setReading(true);
+      const result = await importScreenplayBytes(file.name, new Uint8Array(await file.arrayBuffer()));
       setPreview(result); setTitle(result.title); if (result.author) setAuthor(result.author);
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setReading(false); }
   };
 
   const create = async () => {
@@ -41,12 +44,12 @@ export function ImportDialog({ onClose, onImported, defaultFolder, defaultAuthor
   return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal import-dialog" role="dialog" aria-modal="true" aria-labelledby="import-title" onMouseDown={(event) => event.stopPropagation()}>
     <button className="icon-button modal-close" onClick={onClose} aria-label="Close"><X size={19}/></button>
     <p className="eyebrow">Import</p><h2 id="import-title">Import a screenplay</h2>
-    <p className="modal-intro">Final Draft (.fdx) and Fountain files become a new Olukotan project. Your original file is never changed.</p>
-    <input ref={input} type="file" accept=".fdx,.fountain,.spmd,.txt" hidden aria-label="Screenplay file" onChange={(event) => void read(event.target.files?.[0])}/>
-    <button className="secondary" onClick={() => input.current?.click()}><FileUp size={17}/> {preview ? `Change file (${preview.fileName})` : "Choose file…"}</button>
+    <p className="modal-intro">Final Draft (.fdx), Word (.docx), PDF and Fountain files become a new Olukotan project. Your original file is never changed.</p>
+    <input ref={input} type="file" accept={IMPORT_ACCEPT} hidden aria-label="Screenplay file" onChange={(event) => void read(event.target.files?.[0])}/>
+    <button className="secondary" onClick={() => input.current?.click()}><FileUp size={17}/> {reading ? "Reading…" : preview ? `Change file (${preview.fileName})` : "Choose file…"}</button>
     {preview && <div className="import-preview">
       <dl>
-        <div><dt>Format</dt><dd>{preview.format === "fdx" ? "Final Draft" : "Fountain"}</dd></div>
+        <div><dt>Format</dt><dd>{{ fdx: "Final Draft", fountain: "Fountain", docx: "Word", pdf: "PDF" }[preview.format]}</dd></div>
         <div><dt>Scenes</dt><dd>{preview.stats.scenes}</dd></div>
         <div><dt>Characters</dt><dd>{preview.stats.characters}</dd></div>
         {preview.stats.dualDialogue > 0 && <div><dt>Dual dialogue</dt><dd>{preview.stats.dualDialogue}</dd></div>}
