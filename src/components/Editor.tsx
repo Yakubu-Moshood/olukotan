@@ -5,6 +5,8 @@ import { lockPages, paginate } from "../lib/pagination";
 import { applyRevisionMarks, clearRevisionMarks, nextRevisionSet, revisionMarkFor, revisionSetById } from "../lib/revisions";
 import { ReportsDialog } from "./ReportsDialog";
 import { TitlePageDialog } from "./TitlePageDialog";
+import { RichLine, type RichLineHandle } from "./RichLine";
+import { autoCapitalise, splitFormatted, visibleLength, type Style } from "../lib/rich-text";
 import { IndexCards, Navigator } from "./Navigator";
 import { BeatBoard } from "./BeatBoard";
 import { moveScene, sceneIndex, type SceneRow } from "../lib/scene-index";
@@ -24,7 +26,7 @@ const SELECTABLE_TYPES: ScreenplayElementType[] = ["scene-heading", "action", "c
 const SHORTCUT_TYPES: Record<string, ScreenplayElementType> = { "1": "scene-heading", "2": "action", "3": "character", "4": "parenthetical", "5": "dialogue", "6": "transition", "7": "shot", "0": "general" };
 
 interface History { past: ScreenplayDocument[]; future: ScreenplayDocument[] }
-interface FocusRequest { index: number; cursor: number }
+interface FocusRequest { index: number; cursor: number; end?: number }
 interface Suggestion { value: string; type: "character" | "character-extension" | "scene-heading"; category: string }
 
 function cloneDocument(value: ScreenplayDocument): ScreenplayDocument { return structuredClone(value); }
@@ -47,7 +49,14 @@ export function Editor({ project, content, dirty, saving, message, onChange, onP
   const [suggestionIndex, setSuggestionIndex] = useState(-1);
   const [autocompleteOpen, setAutocompleteOpen] = useState(true);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
-  const textareas = useRef(new Map<string, HTMLTextAreaElement>());
+  const textareas = useRef(new Map<string, RichLineHandle>());
+  const registrations = useRef(new Map<string, (handle: RichLineHandle | null) => void>());
+  const registerLine = (id: string) => {
+    let callback = registrations.current.get(id);
+    if (!callback) { callback = (handle) => { if (handle) textareas.current.set(id, handle); else { textareas.current.delete(id); registrations.current.delete(id); } }; registrations.current.set(id, callback); }
+    return callback;
+  };
+  const [notice, setNotice] = useState("");
   const focusRequest = useRef<FocusRequest | null>(null);
   const history = useRef<History>({ past: [], future: [] });
   const lastSerialized = useRef(content);
@@ -71,7 +80,7 @@ export function Editor({ project, content, dirty, saving, message, onChange, onP
   useEffect(() => {
     const request = focusRequest.current; if (!request) return;
     const element = document.elements[request.index]; const area = element && textareas.current.get(element.id);
-    if (area) { area.focus(); area.setSelectionRange(request.cursor, request.cursor); area.scrollIntoView?.({ block: "nearest" }); }
+    if (area) { area.focus(); area.setSelectionRange(request.cursor, request.end ?? request.cursor); area.scrollIntoView?.({ block: "nearest" }); }
     focusRequest.current = null;
   }, [document]);
 
@@ -169,7 +178,11 @@ export function Editor({ project, content, dirty, saving, message, onChange, onP
     commitDocument({ ...document, elements }, { index, cursor: current.text.length }, true, { ...projectData, scenes });
   };
 
-  const onTextChange = (index: number, raw: string, cursor: number) => {
+  const onTextChange = (index: number, input: string, cursor: number) => {
+    const current = document.elements[index];
+    // Standard writing: capitalise the first letter of each sentence and a lone "i" in prose elements.
+    const raw = projectData.screenplaySettings.capitalisation.sentences !== false && current && ["action", "dialogue", "general"].includes(current.type)
+      ? autoCapitalise(current.text, input, cursor) : input;
     const result = updateElementText(document.elements, index, raw);
     result.cursorPosition = normalizedCursorPosition(result.elements[index].type, raw, cursor);
     setAutocompleteOpen(true); setSuggestionIndex(-1); commitResult(result);
@@ -179,18 +192,17 @@ export function Editor({ project, content, dirty, saving, message, onChange, onP
     if (cursor !== 0 || index === 0) return false;
     const elements = [...document.elements]; const current = elements[index]; const previous = elements[index - 1];
     if (!current.text) {
-      elements.splice(index, 1); commitDocument({ ...document, elements }, { index: index - 1, cursor: previous.text.length }); return true;
+      elements.splice(index, 1); commitDocument({ ...document, elements }, { index: index - 1, cursor: visibleLength(previous.text) }); return true;
     }
     const compatible = current.type === previous.type && ["action", "dialogue", "general"].includes(current.type);
     if (compatible) {
-      const joinAt = previous.text.length; elements[index - 1] = { ...previous, text: `${previous.text}${previous.text ? " " : ""}${current.text}` }; elements.splice(index, 1);
+      const joinAt = visibleLength(previous.text) + (previous.text ? 1 : 0); elements[index - 1] = { ...previous, text: `${previous.text}${previous.text ? " " : ""}${current.text}` }; elements.splice(index, 1);
       commitDocument({ ...document, elements }, { index: index - 1, cursor: joinAt }); return true;
     }
-    focusRequest.current = { index: index - 1, cursor: previous.text.length }; setActiveIndex(index - 1); setDocument({ ...document }); return true;
+    focusRequest.current = { index: index - 1, cursor: visibleLength(previous.text) }; setActiveIndex(index - 1); setDocument({ ...document }); return true;
   };
 
-  const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>, index: number) => {
-    const area = event.currentTarget;
+  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>, index: number, area: RichLineHandle) => {
     if ((event.ctrlKey || event.metaKey) && SHORTCUT_TYPES[event.key]) { event.preventDefault(); changeType(SHORTCUT_TYPES[event.key], index); return; }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); setActiveIndex(index); setPaletteOpen(true); return; }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") { event.preventDefault(); event.shiftKey ? redo() : undo(); return; }
@@ -212,25 +224,37 @@ export function Editor({ project, content, dirty, saving, message, onChange, onP
       commitResult(result); return;
     }
     if (event.key === "Tab") { event.preventDefault(); commitResult(applyTab(document.elements, index, event.shiftKey)); return; }
-    if (event.key === "Backspace" && removeOrMerge(index, area.selectionStart)) event.preventDefault();
+    if (event.key === "Backspace" && area.selectionEnd === 0 && removeOrMerge(index, area.selectionStart)) event.preventDefault();
   };
 
-  const onPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>, index: number) => {
-    const pasted = event.clipboardData.getData("text/plain"); if (!/\r?\n/u.test(pasted)) return;
-    event.preventDefault();
-    const lines = pasted.split(/\r?\n/u).length;
-    if (lines > 50 && !window.confirm(`Paste and interpret ${lines} lines as screenplay elements?`)) return;
-    const pastedElements = screenplayPasteElements(pasted); const elements = [...document.elements];
-    if (!elements[index].text) elements.splice(index, 1, ...pastedElements); else elements.splice(index + 1, 0, ...pastedElements);
-    const target = elements[index].text ? index + pastedElements.length : index + pastedElements.length - 1;
-    commitDocument({ ...document, elements }, { index: target, cursor: elements[target].text.length });
+  /** Multi-line paste becomes screenplay elements, split around the cursor. Single lines paste inline. */
+  const onPaste = (index: number, pasted: string, area: RichLineHandle) => {
+    if (!/\r?\n/u.test(pasted.trim())) return false;
+    const pastedElements = screenplayPasteElements(pasted.replace(/\r\n?/gu, "\n"));
+    const elements = [...document.elements]; const current = elements[index];
+    const [before, after] = splitFormatted(current.text, area.selectionStart);
+    const replacement = [...(before.trim() ? [{ ...current, text: before }] : []), ...pastedElements, ...(after.trim() ? [createElement(current.type, after.trim())] : [])];
+    elements.splice(index, 1, ...replacement);
+    const target = index + replacement.length - 1 - (after.trim() ? 1 : 0);
+    commitDocument({ ...document, elements }, { index: target, cursor: visibleLength(elements[target].text) });
+    return true;
   };
 
-  const wrapSelection = (marker: "*" | "**" | "_") => {
-    const area = active && textareas.current.get(active.id); if (!area || !["action", "dialogue", "general"].includes(active.type)) return;
-    const start = area.selectionStart; const end = area.selectionEnd; const raw = `${active.text.slice(0, start)}${marker}${active.text.slice(start, end)}${marker}${active.text.slice(end)}`;
-    const elements = [...document.elements]; elements[activeIndex] = { ...active, text: raw };
-    commitDocument({ ...document, elements }, { index: activeIndex, cursor: end + marker.length * 2 });
+  const activeHandle = () => (active ? textareas.current.get(active.id) : undefined);
+  const toggleFormat = (style: Style) => activeHandle()?.toggle(style);
+  const onFormat = (index: number, next: string, start: number, end: number) => {
+    const elements = [...document.elements]; elements[index] = { ...elements[index], text: next };
+    commitDocument({ ...document, elements }, { index, cursor: start, end });
+  };
+  const clipboardAction = async (action: "cut" | "copy" | "paste" | "selectAll") => {
+    const handle = activeHandle(); setContextMenu(null); if (!handle) return;
+    handle.focus();
+    if (action === "selectAll") { handle.setSelectionRange(0, handle.value.length); return; }
+    if (action !== "paste") { window.document.execCommand(action); return; }
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text && !onPaste(activeIndex, text, handle)) handle.insertText(text);
+    } catch { setNotice("Press Ctrl+V to paste — this window wasn't given clipboard access."); setTimeout(() => setNotice(""), 4000); }
   };
 
   const suggestions = useMemo(() => {
@@ -340,7 +364,7 @@ export function Editor({ project, content, dirty, saving, message, onChange, onP
         <hr/><button role="menuitem" className={projectData.pageLock.locked ? "menu-check" : ""} onClick={togglePageLock}>{projectData.pageLock.locked ? "Unlock Pages…" : "Lock Pages"}</button>
         <hr/><button role="menuitem" onClick={() => { setReportsOpen(true); setProductionMenuOpen(false); }}>Reports…</button></div>}</div>
       <select aria-label="Screenplay element" value={active?.type ?? "action"} onChange={(event) => changeType(event.target.value as ScreenplayElementType)}>{SELECTABLE_TYPES.map((type) => <option key={type} value={type}>{ELEMENT_LABELS[type]}</option>)}</select>
-      <button className="icon-button" aria-label="Bold" onClick={() => wrapSelection("**")}><Bold size={16}/></button><button className="icon-button" aria-label="Italic" onClick={() => wrapSelection("*")}><Italic size={16}/></button><button className="icon-button" aria-label="Underline" onClick={() => wrapSelection("_")}><Underline size={16}/></button>
+      <button className="icon-button" aria-label="Bold" title="Bold (Ctrl+B)" onMouseDown={(event) => event.preventDefault()} onClick={() => toggleFormat("bold")}><Bold size={16}/></button><button className="icon-button" aria-label="Italic" title="Italic (Ctrl+I)" onMouseDown={(event) => event.preventDefault()} onClick={() => toggleFormat("italic")}><Italic size={16}/></button><button className="icon-button" aria-label="Underline" title="Underline (Ctrl+U)" onMouseDown={(event) => event.preventDefault()} onClick={() => toggleFormat("underline")}><Underline size={16}/></button>
       <button className="icon-button" aria-label="Undo" onClick={undo} disabled={!history.current.past.length}><Undo2 size={16}/></button><button className="icon-button" aria-label="Redo" onClick={redo} disabled={!history.current.future.length}><Redo2 size={16}/></button><button className="icon-button" aria-label="Command palette" onClick={() => setPaletteOpen(true)}><Command size={16}/></button>
       <span/><button className="icon-button" aria-label="Previous page" disabled={activePage <= 1} onClick={() => goToPage(activePage - 1)}><ChevronLeft size={17}/></button><strong>Page {layout.pages[activePage - 1]?.label ?? activePage} of {pages}</strong><button className="icon-button" aria-label="Next page" disabled={activePage >= pages} onClick={() => goToPage(activePage + 1)}><ChevronRight size={17}/></button></div>
       {project.readOnly && <div className="read-only">Read-only mode — this folder cannot be written to. Your original files are unchanged.</div>}
@@ -350,12 +374,11 @@ export function Editor({ project, content, dirty, saving, message, onChange, onP
         {document.elements.map((element, index) => <PageAware key={element.id} show={pageView} page={layout.elementPage.get(element.id)} previous={index ? pageOf(index - 1) : undefined} label={(page) => layout.pages[page - 1]?.label ?? String(page)}><div className={`screenplay-block screenplay-${element.type} ${element.type === "character" ? "character-cue" : ""} ${index === activeIndex ? "is-active" : ""}`} data-element-type={element.type} data-rendered-cue={element.type === "character" ? renderedCharacterCue(document.elements, index, projectData.screenplaySettings) : undefined}>
           {element.type === "scene-heading" && displaySceneNumber(element, projectData) && projectData.screenplaySettings.sceneNumbers.showInEditor && ["left", "both"].includes(projectData.screenplaySettings.sceneNumbers.position) && (projectData.screenplaySettings.sceneNumbers.mode === "manual" ? <input className="scene-number-input scene-number-left" aria-label={`Scene number ${index + 1}`} value={displaySceneNumber(element, projectData)} onFocus={() => setActiveIndex(index)} onChange={(event) => updateSceneNumber(index, event.target.value.replace(/#/g, ""))}/> : <span className="scene-number-gutter scene-number-left">{displaySceneNumber(element, projectData)}</span>)}
           {element.type === "scene-heading" && displaySceneNumber(element, projectData) && projectData.screenplaySettings.sceneNumbers.showInEditor && ["right", "both"].includes(projectData.screenplaySettings.sceneNumbers.position) && <span className="scene-number-gutter scene-number-right">{displaySceneNumber(element, projectData)}</span>}
-          {element.type === "page-break" ? <button className="explicit-page-break" onClick={() => setActiveIndex(index)}>Page break</button> : <textarea
-            ref={(node) => { if (node) textareas.current.set(element.id, node); else textareas.current.delete(element.id); }}
-            aria-label={`${ELEMENT_LABELS[element.type]} element ${index + 1}`} value={element.text} readOnly={project.readOnly} style={element.type === "character" ? { width: `calc(${Math.max(1, element.text.length)}ch + 2px)`, flexShrink: 0, whiteSpace: "pre-wrap", wordBreak: "normal", overflowWrap: "normal" } : undefined}
-            rows={Math.max(1, element.text.split("\n").length)} spellCheck={!(["scene-heading", "character", "transition", "shot"].includes(element.type))}
-            onFocus={() => setActiveIndex(index)} onChange={(event) => onTextChange(index, event.target.value, event.target.selectionStart)}
-            onKeyDown={(event) => onKeyDown(event, index)} onPaste={(event) => onPaste(event, index)}
+          {element.type === "page-break" ? <button className="explicit-page-break" onClick={() => setActiveIndex(index)}>Page break</button> : <RichLine register={registerLine(element.id)}
+            label={`${ELEMENT_LABELS[element.type]} element ${index + 1}`} value={element.text} readOnly={project.readOnly}
+            spellCheck={!(["scene-heading", "character", "transition", "shot"].includes(element.type))}
+            onFocus={() => setActiveIndex(index)} onChange={(next, cursor) => onTextChange(index, next, cursor)} onFormat={(next, start, end) => onFormat(index, next, start, end)}
+            onKeyDown={(event, handle) => onKeyDown(event, index, handle)} onPaste={(text, handle) => onPaste(index, text, handle)}
             onContextMenu={(event) => { event.preventDefault(); setActiveIndex(index); setContextMenu({ x: event.clientX, y: event.clientY }); }}/>} 
           {automaticContinued(document.elements, index, projectData.screenplaySettings) && !parseCharacter(element.text).extensions.some((extension) => extension.replace(/[’`]/gu, "'") === "CONT'D") && <span className="automatic-continued" aria-label="Automatic character continued">(CONT'D)</span>}
           {index === activeIndex && suggestions.length > 0 && <div className="screenplay-suggestions" role="listbox" aria-label={`${ELEMENT_LABELS[element.type]} suggestions`}>{suggestions.map((suggestion, suggestionPosition) => <button className={suggestionPosition === suggestionIndex ? "selected" : ""} key={`${suggestion.type}-${suggestion.value}`} role="option" aria-label={suggestion.value} aria-selected={suggestionPosition === suggestionIndex} onMouseDown={(event) => event.preventDefault()} onClick={() => chooseSuggestion(suggestion)}><span>{suggestion.value}</span><small>{suggestion.category}</small></button>)}</div>}
@@ -366,8 +389,11 @@ export function Editor({ project, content, dirty, saving, message, onChange, onP
     <aside className="right-sidebar"><div className="panel-heading"><span>Project</span><button className="icon-button" aria-label="Collapse project inspector"><PanelRightClose size={17}/></button></div><div className="inspector-section"><p className="eyebrow">Document</p><h3><FileText size={17}/> Screenplay</h3><dl><div><dt>Active element</dt><dd>{active ? ELEMENT_LABELS[active.type] : "—"}</dd></div><div><dt>Format</dt><dd>Structured Fountain</dd></div><div><dt>Page size</dt><dd>{project.manifest.pageSize}</dd></div><div><dt>Scenes</dt><dd>{scenes.length}</dd></div><div><dt>Words</dt><dd>{wordCount(fountain).toLocaleString()}</dd></div></dl><p className="pagination-note">Pages match the printed PDF: Courier 12 pt, {projectData.screenplaySettings.pagination.pageSize}, {layout.geometry.linesPerPage} lines per page.</p></div>
       <div className="ownership-note"><Cloud size={19}/><strong>Stored on your device</strong><p>{project.projectPath}</p></div>
     </aside>
-    <footer className="status-bar"><span>{message || (dirty ? "Editing" : "All changes saved")}{revisionSettings.enabled && activeRevision && <> · <span className="revision-badge" style={{ background: activeRevision.colour }}>Revising: {activeRevision.name}</span></>}{projectData.pageLock.locked && " · Pages locked"}</span><span>{activeSceneNumber ? `Scene ${activeSceneNumber} · ` : ""}{active ? ELEMENT_LABELS[active.type] : ""} · {wordCount(fountain).toLocaleString()} words · Page {activePage} of {pages} · UTF-8</span></footer>
-    {contextMenu && <div className="element-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} role="menu" onClick={(event) => event.stopPropagation()}>{active?.type === "scene-heading" && <button role="menuitem" onClick={setCurrentSceneNumber}>Set Scene Number…</button>}{SELECTABLE_TYPES.map((type) => <button role="menuitem" key={type} onClick={() => changeType(type)}>{ELEMENT_LABELS[type]} <kbd>Ctrl+{Object.entries(SHORTCUT_TYPES).find(([, value]) => value === type)?.[0] ?? ""}</kbd></button>)}</div>}
+    <footer className="status-bar"><span>{notice || message || (dirty ? "Editing" : "All changes saved")}{revisionSettings.enabled && activeRevision && <> · <span className="revision-badge" style={{ background: activeRevision.colour }}>Revising: {activeRevision.name}</span></>}{projectData.pageLock.locked && " · Pages locked"}</span><span>{activeSceneNumber ? `Scene ${activeSceneNumber} · ` : ""}{active ? ELEMENT_LABELS[active.type] : ""} · {wordCount(fountain).toLocaleString()} words · Page {activePage} of {pages} · UTF-8</span></footer>
+    {contextMenu && <div className="element-context-menu" style={{ left: Math.max(8, Math.min(contextMenu.x, window.innerWidth - 230)), top: Math.max(8, Math.min(contextMenu.y, window.innerHeight - 640)), maxHeight: "calc(100vh - 16px)", overflowY: "auto" }} role="menu" onMouseDown={(event) => event.preventDefault()} onClick={(event) => event.stopPropagation()}>
+      <button role="menuitem" onClick={() => void clipboardAction("cut")} disabled={project.readOnly}>Cut <kbd>Ctrl+X</kbd></button><button role="menuitem" onClick={() => void clipboardAction("copy")}>Copy <kbd>Ctrl+C</kbd></button><button role="menuitem" onClick={() => void clipboardAction("paste")} disabled={project.readOnly}>Paste <kbd>Ctrl+V</kbd></button><button role="menuitem" onClick={() => void clipboardAction("selectAll")}>Select All <kbd>Ctrl+A</kbd></button>
+      <button role="menuitem" onClick={() => { toggleFormat("bold"); setContextMenu(null); }}>Bold <kbd>Ctrl+B</kbd></button><button role="menuitem" onClick={() => { toggleFormat("italic"); setContextMenu(null); }}>Italic <kbd>Ctrl+I</kbd></button><button role="menuitem" onClick={() => { toggleFormat("underline"); setContextMenu(null); }}>Underline <kbd>Ctrl+U</kbd></button>
+      <hr/>{active?.type === "scene-heading" && <button role="menuitem" onClick={setCurrentSceneNumber}>Set Scene Number…</button>}{SELECTABLE_TYPES.map((type) => <button role="menuitem" key={type} onClick={() => changeType(type)}>{ELEMENT_LABELS[type]} <kbd>Ctrl+{Object.entries(SHORTCUT_TYPES).find(([, value]) => value === type)?.[0] ?? ""}</kbd></button>)}</div>}
     {paletteOpen && <div className="command-palette-backdrop" onMouseDown={() => setPaletteOpen(false)}><div className="command-palette" role="dialog" aria-label="Element command palette" onMouseDown={(event) => event.stopPropagation()}><h2>Change screenplay element</h2>{SELECTABLE_TYPES.map((type) => <button key={type} onClick={() => changeType(type)}><span>{ELEMENT_LABELS[type]}</span><kbd>Ctrl+{Object.entries(SHORTCUT_TYPES).find(([, value]) => value === type)?.[0] ?? ""}</kbd></button>)}</div></div>}
     {screenplaySettingsOpen && <ScreenplaySettingsDialog initial={projectData.screenplaySettings} onClose={() => setScreenplaySettingsOpen(false)} onSave={saveScreenplaySettings}/>} 
     {reportsOpen && <ReportsDialog title={project.manifest.title} document={document} projectData={projectData} layout={layout} onClose={() => setReportsOpen(false)}/>}

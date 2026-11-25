@@ -60,6 +60,8 @@ export interface ScreenplaySettings {
     characters: boolean;
     transitions: boolean;
     shots: boolean;
+    /** Capitalise the first letter of each sentence in action and dialogue. */
+    sentences?: boolean;
   };
   revisions: {
     enabled: boolean;
@@ -152,7 +154,7 @@ export const defaultScreenplaySettings = (): ScreenplaySettings => ({
   sceneNumbers: { enabled: false, mode: "automatic", position: "both", showInEditor: true, showInExport: true, showInPrint: true, startAt: 1 },
   pageNumbers: { enabled: true, position: "top-right", startOnPage: 2, customStartPage: 1, firstVisibleNumber: 1, hideOnFirstPage: true },
   continueds: { character: "automatic", dialogueMore: true, dialogueContinued: true, sceneContinued: "off" },
-  capitalisation: { sceneHeadings: true, characters: true, transitions: true, shots: true },
+  capitalisation: { sceneHeadings: true, characters: true, transitions: true, shots: true, sentences: true },
   revisions: { enabled: false, activeSetId: null, showMarks: true },
   pagination: { pageSize: "A4", viewMode: "page", sceneHeadingSpacing: 2 },
   exportDefaults: { format: "pdf", includeTitlePage: true, includeSceneNumbers: true, includePageNumbers: true, includeScriptNotes: false, includeRevisionMarks: false, includeOmittedScenes: false },

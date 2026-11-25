@@ -60,3 +60,14 @@
 .app-menu hr{border:0;border-top:1px solid var(--line);margin:5px 2px}.app-menu .menu-check::before{content:"✓ ";color:var(--accent)}
 .editor-toolbar strong{white-space:nowrap}
 .beat-board,.beat-card{user-select:none;-webkit-user-select:none}.beat-card input,.beat-card textarea{user-select:text;-webkit-user-select:text}
+/* Rich-text script lines (replace the old per-element textareas) */
+.screenplay-block .rich-line{display:block;outline:0;background:transparent;font:inherit;line-height:inherit;color:inherit;padding:0;width:100%;min-height:1.25em;border-left:2px solid transparent;white-space:pre-wrap;overflow-wrap:break-word;cursor:text;caret-color:#111}
+.screenplay-block.is-active .rich-line{border-left-color:#bd4d3155}
+.screenplay-section .rich-line{font-weight:700}
+.screenplay-note .rich-line{background:#fff4bc;padding:6px}
+.screenplay-character.character-cue .rich-line{display:inline-block;width:auto;flex:0 0 auto;min-width:calc(1ch + 2px);max-width:calc(100% - 9ch);white-space:pre-wrap;word-break:normal;overflow-wrap:normal}
+.screenplay-transition .rich-line{text-align:right}
+.rich-line .rt-b{font-weight:700}.rich-line .rt-i{font-style:italic}.rich-line .rt-u{text-decoration:underline;text-underline-offset:2px}
+.rich-line[aria-readonly=true]{cursor:default}
+.element-context-menu hr{border:0;border-top:1px solid var(--line,#ddd);margin:4px 2px}
+@media(max-width:900px){.screenplay-block .rich-line{min-height:1.25em;padding:0;font-size:11pt}}

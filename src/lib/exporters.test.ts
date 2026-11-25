@@ -89,4 +89,17 @@ describe("screenplay exporters", () => {
     const letter = await PDFDocument.load((await exportScreenplay("pdf", { ...context, projectData: letterData })).data as Uint8Array);
     expect(letter.getPage(0).getSize()).toEqual({ width: 612, height: 792 });
   });
+
+  it("carries bold, italic and underline into Word, RTF and HTML instead of literal asterisks", async () => {
+    const document = synchroniseSceneMetadata({ preamble: "", elements: [createElement("action", "A **loud** bang, *soft* _now_.")] }, defaultProjectData());
+    const context = { project, document: document.document, projectData: document.projectData, options: { ...options, includeTitlePage: false }, fontLoader };
+    const html = String((await exportScreenplay("html", context)).data);
+    const rtf = String((await exportScreenplay("rtf", context)).data);
+    const docx = new TextDecoder().decode((await exportScreenplay("docx", context)).data as Uint8Array);
+    const txt = String((await exportScreenplay("txt", context)).data);
+    expect(html).toContain("<strong>loud</strong>"); expect(html).toContain("<em>soft</em>"); expect(html).toContain("<u>now</u>");
+    expect(rtf).toContain("{\\b loud}"); expect(rtf).toContain("{\\ul now}");
+    expect(docx).toContain('<w:b/><w:sz w:val="24"/></w:rPr><w:t xml:space="preserve">loud</w:t>');
+    for (const output of [html, rtf, docx, txt]) expect(output).not.toContain("**");
+  });
 });

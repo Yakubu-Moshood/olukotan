@@ -85,7 +85,7 @@ export function pageGeometry(pageSize: "A4" | "US Letter"): PageGeometry {
 // Inline formatting and wrapping
 // ---------------------------------------------------------------------------
 
-interface StyledChar { ch: string; bold: boolean; italic: boolean; underline: boolean }
+export interface StyledChar { ch: string; bold: boolean; italic: boolean; underline: boolean }
 
 /** Parses Fountain emphasis (***bold italic***, **bold**, *italic*, _underline_) into styled characters. */
 export function styledChars(text: string): StyledChar[] {

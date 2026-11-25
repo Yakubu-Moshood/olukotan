@@ -1,3 +1,5 @@
+import { splitFormatted } from "./rich-text";
+
 export type ScreenplayElementType =
   | "scene-heading" | "action" | "character" | "parenthetical" | "dialogue"
   | "transition" | "shot" | "general" | "section" | "synopsis" | "note" | "page-break";
@@ -184,8 +186,8 @@ export function applyEnter(elements: ScreenplayElement[], index: number, cursorP
     const next = [...elements]; next.splice(index, 1, character, dialogue);
     return { elements: next, activeIndex: index + 1, cursorPosition: 0 };
   }
-  const before = current.text.slice(0, cursorPosition);
-  const after = current.text.slice(cursorPosition);
+  // cursorPosition is a visible-text offset; split without breaking emphasis markers.
+  const [before, after] = splitFormatted(current.text, cursorPosition);
   const semanticallyEmpty = current.type === "parenthetical" ? !current.text.replace(/[()]/g, "").trim() : !current.text.trim();
   const nextType = getNextElementType({ currentType: current.type, currentText: current.text,
     previousType: elements[index - 1]?.type, previousText: elements[index - 1]?.text,
