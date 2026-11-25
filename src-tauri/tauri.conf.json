@@ -15,8 +15,8 @@
         "title": "Olukotan",
         "width": 1440,
         "height": 920,
-        "minWidth": 980,
-        "minHeight": 680,
+        "minWidth": 640,
+        "minHeight": 480,
         "resizable": true
       }
     ],
