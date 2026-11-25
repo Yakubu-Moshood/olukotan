@@ -8,7 +8,11 @@
 - basic UTF-8 Fountain editor, scene navigator and approximate counts
 - explicit save, idle autosave, readable crash recovery, read-only mode and external-change guard
 
-## Phase 2 — screenplay editor
+## Delivered: Final Draft parity milestone
+
+Industry pagination and PDF, title page, FDX import/export round trip, Navigator, Index Cards, Beat Board, revisions, locked pages, omitted scenes, and reports.
+
+## Phase 2 — screenplay editor (remaining)
 
 Build a structured element model and keyboard state machine; professional A4/US Letter pagination; scene/character autocomplete; title page; dual dialogue; stable PDF export; find/replace; focus/full-screen modes; and richer recovery/conflict UI. Test cursor behaviour and long-script performance before virtualisation.
 

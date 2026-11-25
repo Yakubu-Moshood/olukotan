@@ -1,7 +1,24 @@
 # Importers
 
-Importers are not included in Phase 1. The planned order is Fountain, Final Draft FDX, plain text, Markdown, DOCX, RTF, HTML, ODT, and text-based PDF.
+Supported: **Final Draft (.fdx)** and **Fountain (.fountain, .spmd, .txt)**, from Home → *Import a screenplay*.
 
-Every importer must retain the original source, parse into a neutral element model, calculate per-element confidence, show a preview and warnings, and commit only after confirmation. Unknown or low-confidence content becomes General Text rather than being silently forced into screenplay structure. Import failure must leave the project unchanged and record a diagnostic without unnecessary script excerpts.
+Every import parses into the neutral element model, shows a preview (scenes, characters, dual dialogue, revision sets and warnings), and creates a new project only after confirmation. The original file is never modified. A failed import leaves nothing behind.
 
-Fixture coverage planned for Phase 3 includes simple FDX, dual dialogue, revisions, notes, malformed XML, Fountain round trips, DOCX screenplay/prose, RTF, text PDF, empty and large documents, and Yoruba names with diacritics.
+## FDX mapping
+
+| Final Draft | Olukotan |
+| --- | --- |
+| Scene Heading, Action, Character, Parenthetical, Dialogue, Transition, Shot, General | same element |
+| Cast List, New Act, End of Act and other types | General Text, with a warning |
+| `Text Style` Bold / Italic / Underline / AllCaps | Fountain `**`, `*`, `_`, upper case |
+| `Number` on scene headings | manual scene numbers |
+| `SceneProperties` Summary / Color / Title | scene summary, colour, tag |
+| `DualDialogue` | dual dialogue group (stored as Fountain `^`) |
+| `ScriptNote` | Note element |
+| `Revisions` and `RevisionID` | revision sets and per-element marks |
+| `StartsNewPage` | page break |
+| `TitlePage` | title-page fields, mapped by alignment |
+
+Everything else (ElementSettings, SmartType, HeaderAndFooter, PageLayout and so on) is kept as a template and written back on FDX export.
+
+Fixtures and tests: `src/lib/__fixtures__/sample.fdx`, `src/lib/fdx.test.ts`, `src/lib/importers.test.ts`.

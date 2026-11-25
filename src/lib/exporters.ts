@@ -2,7 +2,7 @@ import type { ExportFormat, ProjectData, ProjectPayload } from "../types";
 import { serializeFountain, type ScreenplayDocument, type ScreenplayElement } from "./screenplay-elements";
 import { renderedCharacterCue } from "./screenplay-production";
 import { layoutTitlePage, paginate, parseTitlePage, type Layout } from "./pagination";
-import { renderPdf, type FontLoader } from "./pdf-render";
+import type { FontLoader } from "./pdf-render";
 import { revisionHeader, revisionMarkFor } from "./revisions";
 import { writeFdx } from "./fdx";
 
@@ -111,6 +111,8 @@ export function layoutForExport(context: ExportContext): Layout {
 
 const pdfExporter: Exporter = { format: "pdf", extension: "pdf", async export(context) {
   const layout = layoutForExport(context);
+  // pdf-lib and the font engine are large; load them only when a PDF is exported.
+  const { renderPdf } = await import("./pdf-render");
   const bytes = await renderPdf(layout, {
     settings: context.projectData.screenplaySettings, includePageNumbers: context.options.includePageNumbers,
     includeSceneNumbers: context.options.includeSceneNumbers, includeRevisionMarks: context.options.includeRevisionMarks,
