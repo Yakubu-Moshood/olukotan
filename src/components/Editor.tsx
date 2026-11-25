@@ -837,6 +837,7 @@ export function Editor(props: EditorProps) {
 
   return <div className={`studio fd-studio ${focusMode ? "focus-mode" : ""}`} onClick={() => contextMenu && setContextMenu(null)}>
     <header className="fd-menubar-row">
+      <span className="app-mark" title="Olukotan" aria-hidden>Ọ</span>
       <MenuBar menus={menus}/>
       {collab && <span className={`collab-pill ${collab.status}`} onClick={() => setCollabPanel(true)}>{participants.length || 1} co-writing</span>}
     </header>
@@ -845,7 +846,7 @@ export function Editor(props: EditorProps) {
       actions={{ newScript: () => leaveWith(() => props.onNew?.()), open: () => leaveWith(() => props.onOpen?.()), save: onSave, print: () => void print(), spelling: () => setDialog("spelling"),
         cut: () => void clipboardAction("cut"), copy: () => void clipboardAction("copy"), paste: () => void clipboardAction("paste"), undo, redo, format: toggleFormat, setType: (type) => changeType(type), setZoom,
         normalView: () => { setSplit("none"); setViewMode("continuous"); }, pageView: () => { setSplit("none"); setViewMode("page"); }, splitVertical: () => setSplit(split === "vertical" ? "none" : "vertical"), splitHorizontal: () => setSplit(split === "horizontal" ? "none" : "horizontal"),
-        toggleNavigator: () => setShowNavigator(!showNavigator), toggleProperties: () => setShowProperties(!showProperties), cards: () => setView(view === "cards" ? "script" : "cards") }}/>}
+        info: () => { setReportTab("Summary"); setDialog("reports"); }, help: () => setDialog("help"), toggleNavigator: () => setShowNavigator(!showNavigator), toggleProperties: () => setShowProperties(!showProperties), cards: () => setView(view === "cards" ? "script" : "cards") }}/>}
     {showChrome && toolbarPrefs.showRuler && view === "script" && <Ruler widthIn={geometry.widthIn} zoom={zoom} left={activeSpec.left} right={activeSpec.right}
       onChange={(left, right) => commitDocument(document, undefined, false, { ...projectData, elementStyles: { ...projectData.elementStyles, [active?.type ?? "action"]: { ...projectData.elementStyles?.[active?.type ?? "action"], left, right } } })}/>}
     <div className={`fd-body ${showChrome && showNavigator ? "with-nav" : ""} ${(showChrome && showProperties) || collabPanel ? "with-side" : ""}`}>

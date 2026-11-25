@@ -194,3 +194,16 @@
 @media(max-width:900px){.fd-nav,.scene-properties,.collab-panel{display:none}.ol-grid2,.ol-grid3,.ol-split,.ol-templates{grid-template-columns:1fr}.fd-title strong{max-width:140px}.menu-top{padding:0 6px}}
 
 .fd-menubar-row{justify-content:flex-start;gap:12px}.sb-save{color:var(--muted)}
+
+/* Classic top bar: app mark + menus, then one compact toolbar row */
+.fd-menubar-row{height:28px;background:#fbfbfa;border-bottom:1px solid #e1dfda;gap:4px}
+.app-mark{width:18px;height:18px;border-radius:4px;background:linear-gradient(#c75a3a,#93361f);color:#fff;font:700 12px/18px "Segoe UI",sans-serif;text-align:center;margin:0 2px 0 4px;flex-shrink:0}
+.menu-top{font-size:13.5px;padding:0 8px}
+.toolbar{background:linear-gradient(#f9f9f8,#e9e8e4);border-bottom:1px solid #c9c6bf;padding:2px 6px;gap:1px;flex-wrap:nowrap;overflow-x:auto}
+.tool-group{border-right:1px solid #cfccc4;padding-right:4px;margin-right:3px}
+.tool{width:26px;height:26px;border-radius:3px}
+.tool:hover:not(:disabled){background:linear-gradient(#fdfdfd,#e3eaf4);border-color:#9fb6d6}
+.tool.active{background:linear-gradient(#d8e6f8,#c3d7f1);border-color:#7d9fcc}
+.tint-green{color:#2e8b3a}.tint-amber{color:#c98a12}.tint-blue{color:#2f6db5}.tint-red{color:#b8322a}.tint-violet{color:#5b4bb0}.tint-slate{color:#4a4f57}
+.tool .fmt{font:700 15px "Times New Roman",Georgia,serif;color:#1f1e1b}.tool i.fmt{font-weight:400;font-style:italic}.tool u.fmt{font-weight:400}
+.tool-select{height:22px;font-size:12.5px;border-radius:2px;border-color:#b9b6ae}
