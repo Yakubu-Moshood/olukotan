@@ -19,6 +19,10 @@ export interface OlukotanPlatform {
   reveal(path: string): Promise<void>;
   importProject(payload: ProjectPayload): Promise<void>;
   recordExport(path: string, entry: { format: ExportFormat; path: string; exportedAt: string }): Promise<void>;
+  /** Automatic timed backups (desktop only): kept in the project's versions folder. */
+  writeVersion?(path: string, content: string, projectData: ProjectData, keep: number): Promise<void>;
+  listVersions?(path: string): Promise<{ name: string; modifiedAt: number }[]>;
+  readVersion?(path: string, name: string): Promise<{ content: string; projectData?: ProjectData }>;
 }
 
 const defaults: AppSettings = { defaultProjectFolder: "This device", defaultAuthor: "", theme: "system", autosaveSeconds: 5, googleClientId: "", driveSyncEnabled: false };
@@ -51,6 +55,9 @@ const desktopPlatform: OlukotanPlatform = {
   async reveal(projectPath) { const { invoke } = await import("@tauri-apps/api/core"); return invoke("reveal_in_explorer", { projectPath }); },
   async importProject() { throw new Error("Drive import is available in the web companion."); },
   async recordExport(projectPath, entry) { const { invoke } = await import("@tauri-apps/api/core"); return invoke("record_export", { projectPath, entry }); },
+  async writeVersion(projectPath, content, projectData, keep) { const { invoke } = await import("@tauri-apps/api/core"); return invoke("write_version", { projectPath, content, projectData, keep }); },
+  async listVersions(projectPath) { const { invoke } = await import("@tauri-apps/api/core"); return invoke("list_versions", { projectPath }); },
+  async readVersion(projectPath, name) { const { invoke } = await import("@tauri-apps/api/core"); return invoke("read_version", { projectPath, name }); },
 };
 
 export const platform = isTauri ? desktopPlatform : webPlatform;
@@ -95,4 +102,11 @@ export async function setWindowTitle(title: string): Promise<void> {
   document.title = title;
   if (!isTauri) return;
   try { const { getCurrentWindow } = await import("@tauri-apps/api/window"); await getCurrentWindow().setTitle(title); } catch { /* title is cosmetic */ }
+}
+
+/** The installed app's version (desktop), or null on the web where the newest version always loads. */
+export async function appVersion(): Promise<string | null> {
+  if (!isTauri) return null;
+  const { getVersion } = await import("@tauri-apps/api/app");
+  return getVersion();
 }

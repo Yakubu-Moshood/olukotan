@@ -5,7 +5,8 @@ import { Home } from "./components/Home";
 import { ImportDialog } from "./components/ImportDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { googleDrive } from "./google-drive";
-import { platform } from "./platform";
+import { appVersion, openExternal, platform } from "./platform";
+import { checkForUpdate, type UpdateInfo } from "./lib/updates";
 import { migrateProjectData, type AppSettings, type ProjectData, type ProjectPayload, type RecentProject } from "./types";
 import type { Stationery } from "./lib/stationery";
 import { synchroniseSceneMetadata } from "./lib/screenplay-production";
@@ -32,6 +33,7 @@ export default function App() {
   const [driveBusy, setDriveBusy] = useState(false);
   const [driveMessage, setDriveMessage] = useState("");
   const contentRef = useRef(content); contentRef.current = content;
+  const dirtySinceRef = useRef(0);
   const projectDataRef = useRef<ProjectData>(migrateProjectData());
 
   const refresh = useCallback(async () => { try { setRecents(await platform.recents()); } catch { setRecents([]); } }, []);
@@ -77,6 +79,12 @@ export default function App() {
   };
   const openRecent = async (path: string) => { try { enterProject(await platform.openProject(path)); } catch (reason) { window.alert(errorText(reason)); } };
 
+  // Desktop: look for a newer installer once at start-up and offer it quietly.
+  const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  useEffect(() => {
+    void appVersion().then((version) => version ? checkForUpdate(version) : null).then(setUpdate).catch(() => undefined);
+  }, []);
+
   const save = useCallback(async () => {
     if (!project || !dirty || project.readOnly) return;
     setSaving(true); setMessage("");
@@ -98,9 +106,27 @@ export default function App() {
   useEffect(() => {
     if (!project || !dirty || project.readOnly) return;
     const recoveryTimer = window.setTimeout(() => { void platform.recover(project.projectPath, contentRef.current).then(() => setMessage("Recovery copy updated")); }, 1500);
-    const saveTimer = window.setTimeout(() => { void save(); }, settings.autosaveSeconds * 1000);
+    // Save after a pause in typing, but never leave changes unsaved for more than 60 seconds.
+    if (!dirtySinceRef.current) dirtySinceRef.current = Date.now();
+    const deadline = Math.max(0, 60_000 - (Date.now() - dirtySinceRef.current));
+    const saveTimer = window.setTimeout(() => { void save(); }, Math.min(settings.autosaveSeconds * 1000, deadline));
     return () => { clearTimeout(recoveryTimer); clearTimeout(saveTimer); };
   }, [content, dirty, project, save, settings.autosaveSeconds]);
+  useEffect(() => { if (!dirty) dirtySinceRef.current = 0; }, [dirty]);
+
+  // Automatic backups: a timed copy in the project's versions folder whenever the script has changed.
+  const projectPath = project?.projectPath; const readOnly = project?.readOnly;
+  useEffect(() => {
+    if (!projectPath || readOnly || !platform.writeVersion) return;
+    let last = contentRef.current;
+    const minutes = Math.max(1, settings.backupMinutes ?? 15);
+    const timer = window.setInterval(() => {
+      if (contentRef.current === last) return;
+      last = contentRef.current;
+      void platform.writeVersion?.(projectPath, last, projectDataRef.current, Math.max(1, settings.backupsToKeep ?? 20)).catch(() => setMessage("Automatic backup couldn't be written"));
+    }, minutes * 60_000);
+    return () => clearInterval(timer);
+  }, [projectPath, readOnly, settings.backupMinutes, settings.backupsToKeep]);
 
   useEffect(() => {
     // The editor's File menu also handles Ctrl+S; only act when nothing else has.
@@ -128,7 +154,13 @@ export default function App() {
     enterProject({ ...value, screenplay, projectData: prepared.projectData, modifiedAt });
   };
 
-  if (project) return <Editor key={editorKey} project={project} joinCode={joinCode} settings={settings} recents={recents}
+  const updateToast = update && <div className="update-toast" role="status">
+    <span>Olukotan {update.version} is available.</span>
+    <button className="primary" onClick={() => { void openExternal(update.downloadUrl); setUpdate(null); }}>Download</button>
+    <button className="secondary" onClick={() => setUpdate(null)}>Later</button>
+  </div>;
+
+  if (project) return <><Editor key={editorKey} project={project} joinCode={joinCode} settings={settings} recents={recents}
     onSettingsChange={async (value) => { await platform.saveSettings(value); setSettings(value); }}
     onNew={() => { setProject(null); setCreateOpen(true); }}
     onNewFromTemplate={(value) => { setTemplate(value); setProject(null); setCreateOpen(true); }}
@@ -145,7 +177,7 @@ export default function App() {
     onProjectDataChange={(value) => { projectDataRef.current = value; setProject((current) => current ? { ...current, projectData: value } : current); setDirty(true); setMessage(""); }}
     onExported={(entry) => { setProject((current) => current ? { ...current, manifest: { ...current.manifest, exportHistory: [...current.manifest.exportHistory, entry] } } : current); void platform.recordExport(project.projectPath, entry); setMessage(`Exported ${entry.format.toUpperCase()}`); }}
     onHome={() => { if (!dirty || window.confirm("Leave the editor? Your recovery copy will remain available.")) { setProject(null); void refresh(); } }}
-    onReveal={() => void platform.reveal(project.projectPath)} />;
+    onReveal={() => void platform.reveal(project.projectPath)} />{updateToast}</>;
 
   const webMode = platform.kind === "web";
   return <><Home recents={recents} onCreate={() => setCreateOpen(true)} onImport={() => setImportOpen(true)} onOpen={() => void openFolder()} onOpenRecent={(path) => void openRecent(path)}
@@ -153,5 +185,5 @@ export default function App() {
     drive={{ configured: settings.driveSyncEnabled && Boolean(settings.googleClientId), connected: driveConnected, busy: driveBusy, message: driveMessage, onConnect: () => void syncDrive(), onSync: () => void syncDrive() }} />
     {createOpen && <CreateProjectDialog onClose={() => { setCreateOpen(false); setTemplate(null); }} onCreated={(value) => void applyTemplate(value)} defaultAuthor={settings.defaultAuthor} defaultFolder={settings.defaultProjectFolder || (webMode ? "This device" : "")} webMode={webMode}/>} 
     {importOpen && <ImportDialog onClose={() => setImportOpen(false)} defaultAuthor={settings.defaultAuthor} defaultFolder={settings.defaultProjectFolder || (webMode ? "This device" : "")} onImported={(value) => { setImportOpen(false); enterProject(value); void refresh(); }}/>}
-    {settingsOpen && <SettingsDialog initial={settings} onClose={() => setSettingsOpen(false)} webMode={webMode} onSave={async (value) => { await platform.saveSettings(value); setSettings(value); setSettingsOpen(false); }}/>}</>;
+    {settingsOpen && <SettingsDialog initial={settings} onClose={() => setSettingsOpen(false)} webMode={webMode} onSave={async (value) => { await platform.saveSettings(value); setSettings(value); setSettingsOpen(false); }}/>}{updateToast}</>;
 }

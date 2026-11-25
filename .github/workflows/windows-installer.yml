@@ -1,0 +1,60 @@
+name: Windows installer
+
+# Builds a fresh Olukotan installer on every push and publishes it as a GitHub release.
+# The app checks the latest release and offers it as an update.
+on:
+  push:
+    branches: [main, feature/final-draft-parity]
+    paths-ignore: ["**.md", "docs/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-installer
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Set version from build number
+        id: version
+        shell: pwsh
+        run: |
+          $version = "0.1.$env:GITHUB_RUN_NUMBER"
+          node -e "const fs=require('fs');for(const f of ['package.json','src-tauri/tauri.conf.json']){const j=JSON.parse(fs.readFileSync(f,'utf8'));j.version='$version';fs.writeFileSync(f,JSON.stringify(j,null,2)+'\n');}"
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Test
+        run: npx vitest run
+
+      - name: Build installer
+        run: npx tauri build --bundles nsis
+
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $installer = Get-ChildItem "src-tauri/target/release/bundle/nsis/*-setup.exe" | Select-Object -First 1
+          $notes = "Olukotan $version, built from ${{ github.ref_name }} ($($env:GITHUB_SHA.Substring(0,7))). Download the setup file below and run it to install or update. Your scripts are kept."
+          gh release create "v$version" $installer.FullName --title "Olukotan $version" --notes $notes --target $env:GITHUB_SHA --latest

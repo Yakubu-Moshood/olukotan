@@ -210,3 +210,4 @@
 
 /* Dialogs never grow past the window: the content scrolls and the buttons stay reachable. */
 .modal{max-height:calc(100vh - 40px);overflow:auto}
+.update-toast{position:fixed;right:16px;bottom:34px;z-index:50;display:flex;align-items:center;gap:10px;background:#fff;border:1px solid #d6d2c8;border-radius:8px;padding:10px 12px;box-shadow:0 8px 28px #0003;font-size:13px}.update-toast button{padding:6px 12px;font-size:13px}

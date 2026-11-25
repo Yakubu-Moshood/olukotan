@@ -27,14 +27,15 @@ import { ElementsDialog, FontDialog } from "./dialogs/FormatDialogs";
 import { BookmarksDialog, HeaderFooterDialog, MacrosDialog, MoresContinuedsDialog, PageLayoutDialog, ScriptNotesDialog, SendToScriptDialog, SmartTypeDialog } from "./dialogs/DocumentDialogs";
 import { CustomizeDialog, FormatAssistantDialog, NamesDialog, OptionsDialog, ReformatDialog, ScriptCompareDialog, SpeechDialog, SpellingDialog, ThesaurusDialog, VoicesDialog } from "./dialogs/ToolsDialogs";
 import { RevisionsDialog, SceneNumbersDialog } from "./dialogs/ProductionDialogs";
-import { AboutDialog, HelpDialog, PrintPreviewDialog, SaveAsDialog, StationeryDialog } from "./dialogs/FileDialogs";
+import { AboutDialog, HelpDialog, PrintPreviewDialog, SaveAsDialog, RestoreBackupDialog, StationeryDialog } from "./dialogs/FileDialogs";
 import { CollaboPanel } from "./CollaboPanel";
 import { ScenePropertiesPanel } from "./ScenePropertiesPanel";
 import { findAll, nextMatch, replaceAll, replaceMatch, type FindOptions } from "../lib/find";
 import { exportScreenplay } from "../lib/exporters";
 import { backupArchive, backupFileName } from "../lib/backup";
+import { checkForUpdate } from "../lib/updates";
 import { printPdf } from "../lib/print";
-import { closeAppWindow, openExternal, platform, saveFileAs, setWindowTitle, toggleFullscreen } from "../platform";
+import { appVersion, closeAppWindow, openExternal, platform, saveFileAs, setWindowTitle, toggleFullscreen } from "../platform";
 import type { Stationery } from "../lib/stationery";
 import { CollabSession, applyPatch, diffElements, sessionCode, type ChatMessage, type CollabMessage, type Participant } from "../lib/collab";
 import type { SpeechLine } from "../lib/speech";
@@ -50,7 +51,7 @@ type Confirm = { title: string; message: string; confirmLabel: string; danger?: 
 type Prompt = { title: string; label: string; initial?: string; confirmLabel?: string; validate?(value: string): string | undefined; onSubmit(value: string): void };
 type DialogId = "find" | "goto" | "elements" | "font" | "pageLayout" | "headerFooter" | "mores" | "titlePage" | "smartType" | "macros" | "bookmarks" | "scriptNotes" | "sendToScript"
   | "spelling" | "thesaurus" | "speech" | "voices" | "names" | "reformat" | "formatAssistant" | "compare" | "customize" | "options" | "sceneNumbers" | "revisions"
-  | "stationery" | "saveAs" | "printPreview" | "about" | "help" | "shortcuts" | "export" | "reports" | "screenplaySettings";
+  | "stationery" | "saveAs" | "restoreBackup" | "printPreview" | "about" | "help" | "shortcuts" | "export" | "reports" | "screenplaySettings";
 
 function cloneDocument(value: ScreenplayDocument): ScreenplayDocument { return structuredClone(value); }
 const newId = () => globalThis.crypto?.randomUUID?.() ?? `id-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -542,6 +543,16 @@ export function Editor(props: EditorProps) {
     try { const path = await saveFileAs(`${safeTitle}.pdf`, await makePdf(), "PDF", ["pdf"]); if (path) { onExported({ format: "pdf", path, exportedAt: new Date().toISOString() }); setNotice(`Saved PDF to ${path}`); } }
     catch (reason) { setNotice(`The PDF couldn't be saved. ${reason instanceof Error ? reason.message : ""}`, 6000); }
   };
+  const checkUpdates = async () => {
+    const version = await appVersion();
+    if (!version) { setNotice("The web version always loads the newest Olukotan."); return; }
+    setNotice("Checking for updates…");
+    try {
+      const update = await checkForUpdate(version);
+      if (!update) { setNotice(`You have the latest Olukotan (${version}).`); return; }
+      setConfirm({ title: `Olukotan ${update.version} is available`, message: `You have ${version}. Download the new installer, then run it to update. Your scripts are kept.`, confirmLabel: "Download", onConfirm: () => void openExternal(update.downloadUrl) });
+    } catch { setNotice("Couldn't reach GitHub to check for updates. Check your internet connection.", 6000); }
+  };
   const backup = async () => {
     try { const path = await saveFileAs(backupFileName(safeTitle), backupArchive(project.manifest, fountain, projectData), "ZIP archive", ["zip"]); if (path) setNotice(`Backup saved to ${path}`); }
     catch (reason) { setNotice(`The backup couldn't be saved. ${reason instanceof Error ? reason.message : ""}`, 6000); }
@@ -616,6 +627,7 @@ export function Editor(props: EditorProps) {
       { id: "file.pdf", label: "Save As PDF…", run: () => void saveAsPdf() },
       { id: "file.export", label: "Export…", run: () => setDialog("export") },
       { id: "file.backup", label: "Backup…", run: () => void backup() },
+      { id: "file.restoreBackup", label: "Restore from Auto-Backup…", run: () => setDialog("restoreBackup"), disabled: !platform.listVersions },
       { id: "file.revert", label: "Revert", run: revert, disabled: !dirty || !props.onRevert }, "separator",
       { id: "file.preview", label: "Print Preview", run: () => setDialog("printPreview") },
       { id: "file.print", label: "Print…", shortcut: "Ctrl+P", run: () => void print() }, "separator",
@@ -733,7 +745,7 @@ export function Editor(props: EditorProps) {
       { id: "help.guide", label: "Olukotan Help", shortcut: "F1", run: () => setDialog("help") },
       { id: "help.shortcuts", label: "Keyboard Shortcuts", run: () => setDialog("shortcuts") }, "separator",
       { id: "help.issue", label: "Report a Problem…", run: () => void openExternal("https://github.com/Yakubu-Moshood/olukotan/issues/new") },
-      { id: "help.updates", label: "Check for Updates…", run: () => void openExternal("https://github.com/Yakubu-Moshood/olukotan/releases") }, "separator",
+      { id: "help.updates", label: "Check for Updates…", run: () => void checkUpdates() }, "separator",
       { id: "help.about", label: "About Olukotan", run: () => setDialog("about") },
     ] },
   ];
@@ -905,6 +917,8 @@ export function Editor(props: EditorProps) {
     {dialog === "sceneNumbers" && <SceneNumbersDialog settings={projectData.screenplaySettings.sceneNumbers} onApply={applySceneNumbers} onClose={() => setDialog(null)}/>}
     {dialog === "revisions" && <RevisionsDialog projectData={projectData} onSave={(revisionSets, activeSetId, showMarks) => { commitData({ ...withSettings({ revisions: { ...revisionSettings, activeSetId, showMarks, enabled: revisionSettings.enabled && !!activeSetId } }), revisionSets }); setDialog(null); }} onClose={() => setDialog(null)}/>}
     {dialog === "stationery" && <StationeryDialog onChoose={(template) => { setDialog(null); leaveWith(() => props.onNewFromTemplate?.(template)); }} onClose={() => setDialog(null)}/>}
+    {dialog === "restoreBackup" && <RestoreBackupDialog projectPath={project.projectPath} onClose={() => setDialog(null)} onOpenFolder={() => props.onReveal()}
+      onRestore={async (name, when) => { const version = await platform.readVersion!(project.projectPath, name); commitDocument(parseFountain(version.content), { index: 0, cursor: 0 }, true, version.projectData ? migrateProjectData(version.projectData) : projectData); setDialog(null); setNotice(`Restored the backup from ${when}. Edit → Undo brings back what you had.`, 6000); }}/>}
     {dialog === "saveAs" && <SaveAsDialog title={project.manifest.title} onSave={async (title, folder) => { await props.onSaveAs?.(title, folder, fountain, projectData); setDialog(null); }} onClose={() => setDialog(null)}/>}
     {dialog === "printPreview" && <PrintPreviewDialog makePdf={makePdf} onPrint={(bytes) => void print(bytes)} onClose={() => setDialog(null)}/>}
     {dialog === "about" && <AboutDialog onLink={(url) => void openExternal(url)} onClose={() => setDialog(null)}/>}

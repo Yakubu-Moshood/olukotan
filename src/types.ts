@@ -263,6 +263,8 @@ export interface AppSettings {
   toolbar?: ToolbarPrefs;
   spellCheckAsYouType?: boolean;
   backupsToKeep?: number;
+  /** Minutes between automatic backups (desktop). */
+  backupMinutes?: number;
   zoom?: number;
   defaultProjectFolder: string;
   defaultAuthor: string;

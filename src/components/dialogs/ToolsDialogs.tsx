@@ -208,6 +208,8 @@ export function OptionsDialog({ settings, sentences, webMode, onSave, onClose }:
       <Field label="Default author"><input value={value.defaultAuthor} onChange={(event) => set({ defaultAuthor: event.target.value })}/></Field>
       <div className="ol-grid2"><Field label="Autosave after (seconds idle)"><input type="number" min="2" max="120" value={value.autosaveSeconds} onChange={(event) => set({ autosaveSeconds: Math.max(2, Number(event.target.value) || 5) })}/></Field>
         <Field label="Theme"><select value={value.theme} onChange={(event) => set({ theme: event.target.value as AppSettings["theme"] })}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></Field>
+        {!webMode && <Field label="Automatic backup every (minutes)"><input type="number" min="1" max="120" value={value.backupMinutes ?? 15} onChange={(event) => set({ backupMinutes: Math.max(1, Number(event.target.value) || 15) })}/></Field>}
+        {!webMode && <Field label="Backups to keep per script"><input type="number" min="1" max="200" value={value.backupsToKeep ?? 20} onChange={(event) => set({ backupsToKeep: Math.max(1, Number(event.target.value) || 20) })}/></Field>}
         <Field label="Default zoom"><select value={value.zoom ?? 100} onChange={(event) => set({ zoom: Number(event.target.value) })}>{[75, 90, 100, 110, 125, 150].map((n) => <option key={n} value={n}>{n}%</option>)}</select></Field></div>
     </>}
     {tab === "writing" && <>

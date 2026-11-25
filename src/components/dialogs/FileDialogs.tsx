@@ -79,3 +79,19 @@ export function HelpDialog({ onClose }: { onClose(): void }) {
     {GUIDE.map(([title, body]) => <section key={title} className="ol-help"><h3>{title}</h3><p>{body}</p></section>)}
   </Modal>;
 }
+
+/** File → Restore from Auto-Backup…: the timed copies in the project's versions folder, newest first. */
+export function RestoreBackupDialog({ projectPath, onRestore, onOpenFolder, onClose }: { projectPath: string; onRestore(name: string, when: string): Promise<void>; onOpenFolder(): void; onClose(): void }) {
+  const [items, setItems] = useState<{ name: string; modifiedAt: number }[] | null>(null);
+  const [chosen, setChosen] = useState("");
+  const [error, setError] = useState("");
+  useEffect(() => { void (platform.listVersions?.(projectPath) ?? Promise.resolve([])).then((list) => { setItems(list); setChosen(list[0]?.name ?? ""); }).catch((reason) => setError(String(reason))); }, [projectPath]);
+  const label = (at: number) => new Date(at).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  const pick = items?.find((item) => item.name === chosen);
+  return <Modal title="Restore from Auto-Backup" eyebrow="File" onClose={onClose} width={520} footer={<><button className="secondary" onClick={onOpenFolder}><FolderOpen size={16}/> Show project folder</button><span style={{ flex: 1 }}/><button className="secondary" onClick={onClose}>Cancel</button><button className="primary" disabled={!pick} onClick={async () => { if (!pick) return; try { await onRestore(pick.name, label(pick.modifiedAt)); } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); } }}>Restore</button></>}>
+    <p className="hint">Olukotan keeps a copy of your script automatically while you write in the project's “versions” folder (change how often in Tools → Options). Restoring replaces the script on screen; Edit → Undo brings your current version back.</p>
+    {items === null ? <p>Loading…</p> : items.length === 0 ? <p>No automatic backups yet. The first one is made after you've been writing for a while.</p> :
+      <div className="ol-templates" role="radiogroup">{items.map((item) => <button key={item.name} role="radio" aria-checked={chosen === item.name} className={chosen === item.name ? "active" : ""} onClick={() => setChosen(item.name)}><strong>{label(item.modifiedAt)}</strong></button>)}</div>}
+    {error && <div className="error">{error}</div>}
+  </Modal>;
+}
