@@ -52,6 +52,12 @@ For Google Drive, install Google Drive for Desktop and choose a folder inside it
 - **Structure:** Navigator with pages, eighths, summaries, colours, search and drag-to-reorder; Index Cards; Beat Board.
 - **Production:** revision sets in the standard colour order with margin marks; locked pages with A-pages and combined labels; locked scene numbers with A-scenes; omit/restore scenes; scene, character and location reports with CSV export.
 
+## Menus
+
+Full desktop menu bar: **File** (New, New from Stationery, Open, Close, Save, Save As, Save As PDF, Export, Backup, Revert, Print Preview, Print, Email, Register Script, Recent File, Exit), **Edit** (Undo/Redo, Cut/Copy/Paste, Clear, Select All, Select Scene, Find & Replace, Go To, Find Selection), **View** (Normal/Page, Index Cards, Beat Board, toolbar/ruler/status bar, zoom, focus mode, full screen), **Format** (Elements, Font, Alignment, Spacing, Space Before, Leading, Page Break, Dual Dialogue), **Document** (Page Layout, Header and Footer, Mores and Continueds, Title Page, SmartType, Macros, Bookmarks, ScriptNotes, labels, new scenes, Send to Script), **Tools** (Spelling en-GB, Thesaurus, Speech Control, Assign Voices, Reports, Names Database, Reformat, Format Assistant, ScriptCompare, Navigator, Scene Properties, CollaboWriter, Customize, Options), **Production** (Scene Numbers, Edit Scene Number, Omit Scene, Revisions, Revision Mode, Mark/Clear Revised, Lock Pages, Unlock A Pages, Unlock All Pages, Locking Tools), **Window** (split views) and **Help**.
+
+Live co-writing uses a Supabase project (Tools → Options → Co-writing). The thesaurus uses the free Datamuse service and needs internet; everything else works offline.
+
 ## Known limitations
 
 - Fonts outside Latin/Latin Extended fall back to "?" in PDF.

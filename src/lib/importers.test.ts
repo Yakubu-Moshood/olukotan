@@ -43,3 +43,12 @@ describe("Fountain storage keeps FDX-only structure", () => {
     expect(parsed.elements[2].text).toBe("BAYO");
   });
 });
+
+describe("stable anchors", () => {
+  it("keeps ids, bookmarks and paragraph formatting across save and reopen", async () => {
+    const { createElement, serializeFountain } = await import("./screenplay-elements");
+    const a = createElement("action", "Locked start.", { anchor: true, bookmark: "bm-1", format: { align: "center", spacing: 2 } });
+    const reparsed = parseFountain(serializeFountain({ preamble: "", elements: [createElement("scene-heading", "INT. A - DAY"), a] }));
+    expect(reparsed.elements[1]).toMatchObject({ id: a.id, text: "Locked start.", metadata: { anchor: true, bookmark: "bm-1", format: { align: "center", spacing: 2 } } });
+  });
+});

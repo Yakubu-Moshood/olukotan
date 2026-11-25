@@ -17,6 +17,12 @@ export interface ScreenplayElement {
     revisionSet?: string;
     omitted?: boolean;
     dualDialogueGroupId?: string;
+    /** Paragraph-level overrides from Format → Alignment / Spacing / Space Before. */
+    format?: { align?: "left" | "center" | "right"; spacing?: 1 | 1.5 | 2; spaceBefore?: number };
+    /** Bookmark id pointing at this element. */
+    bookmark?: string;
+    /** Keep this element's id across save/reopen (page-lock starts, bookmarks). */
+    anchor?: boolean;
   };
 }
 
@@ -61,6 +67,8 @@ const CHARACTER_EXTENSION_PATTERN = /\(([^)]*)\)/gu;
 const STRUCTURAL_MARKER = /^\/\*\s*OLUKOTAN:([a-z-]+)\s*\*\/$/i;
 const SCENE_ID_MARKER = /^\/\*\s*OLUKOTAN:SCENE-ID:([^*]+)\*\/$/i;
 const REVISION_MARKER = /^\/\*\s*OLUKOTAN:REV:([^*]+)\*\/$/i;
+const FORMAT_MARKER = /^\/\*\s*OLUKOTAN:FMT:(\{[^*]*\})\s*\*\/$/i;
+const ANCHOR_MARKER = /^\/\*\s*OLUKOTAN:ID:([\w-]+)(?::BM:([\w-]+))?\s*\*\/$/i;
 
 function id() {
   return globalThis.crypto?.randomUUID?.() ?? `element-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -241,9 +249,13 @@ export function parseFountain(source: string): ScreenplayDocument {
   let pendingSceneId: string | undefined;
   let expectingDialogue = false;
   let pendingRevision: string | undefined;
+  let pendingFormat: NonNullable<ScreenplayElement["metadata"]>["format"] | undefined;
+  let pendingAnchor: { id: string; bookmark?: string } | undefined;
   let dualGroup: string | undefined;
   const push = (element: ScreenplayElement) => {
     if (pendingRevision) { element.metadata = { ...element.metadata, revisionSet: pendingRevision }; pendingRevision = undefined; }
+    if (pendingFormat) { element.metadata = { ...element.metadata, format: pendingFormat }; pendingFormat = undefined; }
+    if (pendingAnchor) { element.id = pendingAnchor.id; element.metadata = { ...element.metadata, anchor: true, ...(pendingAnchor.bookmark ? { bookmark: pendingAnchor.bookmark } : {}) }; pendingAnchor = undefined; }
     if (dualGroup && ["character", "parenthetical", "dialogue"].includes(element.type)) element.metadata = { ...element.metadata, dualDialogueGroupId: dualGroup };
     elements.push(element);
   };
@@ -252,6 +264,10 @@ export function parseFountain(source: string): ScreenplayDocument {
     if (!line) { expectingDialogue = false; dualGroup = undefined; continue; }
     const revisionMarker = line.match(REVISION_MARKER);
     if (revisionMarker) { pendingRevision = revisionMarker[1].trim(); continue; }
+    const anchorMarker = line.match(ANCHOR_MARKER);
+    if (anchorMarker) { pendingAnchor = { id: anchorMarker[1], bookmark: anchorMarker[2] }; continue; }
+    const formatMarker = line.match(FORMAT_MARKER);
+    if (formatMarker) { try { pendingFormat = JSON.parse(formatMarker[1]); } catch { /* ignore a damaged marker */ } continue; }
     const sceneIdMarker = line.match(SCENE_ID_MARKER);
     if (sceneIdMarker) { pendingSceneId = sceneIdMarker[1].trim(); continue; }
     const marked = line.match(STRUCTURAL_MARKER);
@@ -295,7 +311,9 @@ export function parseFountain(source: string): ScreenplayDocument {
 
 function fountainText(element: ScreenplayElement, dualSecond = false): string {
   const revision = element.metadata?.revisionSet ? `/* OLUKOTAN:REV:${element.metadata.revisionSet} */\n` : "";
-  return revision + fountainBody(element, dualSecond);
+  const format = element.metadata?.format && Object.keys(element.metadata.format).length ? `/* OLUKOTAN:FMT:${JSON.stringify(element.metadata.format)} */\n` : "";
+  const anchor = element.metadata?.anchor || element.metadata?.bookmark ? `/* OLUKOTAN:ID:${element.id}${element.metadata.bookmark ? `:BM:${element.metadata.bookmark}` : ""} */\n` : "";
+  return anchor + revision + format + fountainBody(element, dualSecond);
 }
 
 function fountainBody(element: ScreenplayElement, dualSecond: boolean): string {

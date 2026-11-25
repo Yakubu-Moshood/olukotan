@@ -137,8 +137,43 @@ export interface PageLock {
   pageStarts: LockedPageStart[];
 }
 
+/** Per-element formatting (Format → Elements). Indents are inches from the page's left edge. */
+export interface ElementStyle {
+  left?: number;
+  right?: number;
+  spaceBefore?: number;
+  align?: "left" | "center" | "right";
+  spacing?: 1 | 1.5 | 2;
+  caps?: boolean;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+}
+
+export interface HeaderFooterText { left: string; center: string; right: string }
+export interface HeaderFooter { header: HeaderFooterText; footer: HeaderFooterText; showOnFirstPage: boolean }
+
+export interface MoresContinuedsText { more: string; contd: string; sceneBottom: string; sceneTop: string }
+
+export interface SmartTypeLists { characters: string[]; extensions: string[]; sceneIntros: string[]; locations: string[]; times: string[]; transitions: string[] }
+
+export interface Macro { id: string; key: string; text: string; elementType?: string }
+export interface Bookmark { id: string; name: string; elementId: string; createdAt: string }
+export interface VoiceAssignment { voice?: string; rate?: number; pitch?: number }
+
 export interface ProjectData {
   schemaVersion: 1;
+  elementStyles?: Partial<Record<string, ElementStyle>>;
+  font?: { family: string; size: number };
+  headerFooter?: HeaderFooter;
+  moresContinueds?: MoresContinuedsText;
+  smartType?: SmartTypeLists;
+  macros?: Macro[];
+  bookmarks?: Bookmark[];
+  voices?: Record<string, VoiceAssignment>;
+  customWords?: string[];
+  /** Page layout: margins in inches, and the "leading" cheat (extra or fewer lines per page). */
+  pageLayout?: { top: number; bottom: number; headerFromTop: number; footerFromBottom: number; linesAdjust: number };
   screenplaySettings: ScreenplaySettings;
   scenes: SceneMetadata[];
   revisionSets: RevisionSet[];
@@ -172,6 +207,8 @@ export function migrateProjectData(value?: Partial<ProjectData>): ProjectData {
     beats: Array.isArray(value?.beats) ? value.beats : [],
     pageLock: value?.pageLock && Array.isArray(value.pageLock.pageStarts) ? value.pageLock : { locked: false, pageStarts: [] },
     ...(value?.importSource ? { importSource: value.importSource } : {}),
+    ...(["elementStyles", "font", "headerFooter", "moresContinueds", "smartType", "macros", "bookmarks", "voices", "customWords", "pageLayout"] as const)
+      .reduce((out, key) => (value && value[key] !== undefined ? { ...out, [key]: value[key] } : out), {} as Partial<ProjectData>),
     productionSnapshots: Array.isArray(value?.productionSnapshots) ? value.productionSnapshots : [],
     screenplaySettings: {
       ...defaults.screenplaySettings, ...settings,
@@ -217,7 +254,16 @@ export interface CreateProjectInput {
   author: string;
 }
 
+export interface ToolbarPrefs { showToolbar: boolean; showRuler: boolean; showStatusBar: boolean; hidden: string[] }
+
 export interface AppSettings {
+  supabaseUrl?: string;
+  supabaseKey?: string;
+  collaboratorName?: string;
+  toolbar?: ToolbarPrefs;
+  spellCheckAsYouType?: boolean;
+  backupsToKeep?: number;
+  zoom?: number;
   defaultProjectFolder: string;
   defaultAuthor: string;
   theme: "system" | "light" | "dark";

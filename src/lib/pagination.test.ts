@@ -192,8 +192,28 @@ describe("locked pages", () => {
     expect(labels).toContain("5");
   });
 
+  it("creates A-pages when material is added on page 1", async () => {
+    const { lockPages } = await import("./pagination");
+    const document = build(); const data = letter();
+    const lockedPages = lockPages(paginate(document, data));
+    const inserted = Array.from({ length: 30 }, (_, i) => createElement("action", `New material ${i}.`));
+    const edited = { ...document, elements: [document.elements[0], document.elements[1], ...inserted, ...document.elements.slice(2)] };
+    const labels = paginate(edited, data, { lockedPages }).pages.map((page) => page.label);
+    expect(labels.slice(0, 2)).toEqual(["1", "1A"]);
+    expect(new Set(labels).size).toBe(labels.length);
+  });
+
   it("generates A, B … Z, AA suffixes", async () => {
     const { suffixLetters } = await import("./pagination");
     expect([1, 2, 26, 27].map(suffixLetters)).toEqual(["A", "B", "Z", "AA"]);
+  });
+});
+
+describe("leading and page layout", () => {
+  it("fits fewer lines per page when looser and more when tighter", () => {
+    const document = parseFountain(Array.from({ length: 110 }, (_, i) => `Action paragraph number ${i} fills exactly one line.\n\n`).join(""));
+    const count = (linesAdjust: number) => { const data = letter(); data.pageLayout = { top: 1, bottom: 1, headerFromTop: 0.5, footerFromBottom: 0.5, linesAdjust }; return { pages: paginate(document, data).pages.length, perPage: pageGeometry("US Letter", data.pageLayout).linesPerPage }; };
+    expect(count(-2).perPage).toBe(52); expect(count(2).perPage).toBe(56);
+    expect(count(-2).pages).toBeGreaterThan(count(2).pages);
   });
 });

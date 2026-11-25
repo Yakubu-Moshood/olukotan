@@ -55,3 +55,37 @@ const desktopPlatform: OlukotanPlatform = {
 
 export const platform = isTauri ? desktopPlatform : webPlatform;
 export const desktop = platform;
+
+/** Saves a generated file. Desktop: native Save dialog (any folder, including Google Drive). Web: browser download. Returns where it went, or null if cancelled. */
+export async function saveFileAs(fileName: string, data: Uint8Array | string, filterName: string, extensions: string[]): Promise<string | null> {
+  const bytes = typeof data === "string" ? new TextEncoder().encode(data) : data;
+  if (isTauri) {
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    const path = await save({ defaultPath: fileName, filters: [{ name: filterName, extensions }] });
+    if (!path) return null;
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("write_export_file", { path, data: Array.from(bytes) });
+    return path;
+  }
+  const blob = new Blob([bytes as BlobPart]);
+  const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = fileName; link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 2000);
+  return `Downloads/${fileName}`;
+}
+
+export async function openExternal(url: string): Promise<void> {
+  if (isTauri) { const { invoke } = await import("@tauri-apps/api/core"); await invoke("open_external", { url }); return; }
+  window.open(url, "_blank", "noopener");
+}
+
+/** Closes the app window (desktop). Returns false on the web, where the caller should go home instead. */
+export async function closeAppWindow(): Promise<boolean> {
+  if (!isTauri) return false;
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  await getCurrentWindow().close(); return true;
+}
+
+export async function toggleFullscreen(): Promise<void> {
+  if (isTauri) { const { getCurrentWindow } = await import("@tauri-apps/api/window"); const win = getCurrentWindow(); await win.setFullscreen(!(await win.isFullscreen())); return; }
+  if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen();
+}

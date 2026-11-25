@@ -1,3 +1,4 @@
+import { useEscape } from "./dialogs/Modal";
 import { useState } from "react";
 import { X } from "lucide-react";
 import { parseTitlePage, serializeTitlePage, type TitlePageFields } from "../lib/pagination";
@@ -17,6 +18,7 @@ const FIELDS: { key: keyof TitlePageFields; label: string; multiline?: boolean; 
 export function TitlePageDialog({ preamble, fallbackTitle, fallbackAuthor, onSave, onClose }: {
   preamble: string; fallbackTitle: string; fallbackAuthor: string; onSave(preamble: string): void; onClose(): void;
 }) {
+  useEscape(onClose);
   const [fields, setFields] = useState<TitlePageFields>(() => {
     const parsed = parseTitlePage(preamble);
     return { ...parsed, title: parsed.title ?? fallbackTitle, author: parsed.author ?? fallbackAuthor, credit: parsed.credit ?? "written by" };

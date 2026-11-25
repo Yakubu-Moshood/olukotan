@@ -99,11 +99,11 @@ export function automaticContinued(elements: ScreenplayElement[], index: number,
   return false;
 }
 
-export function renderedCharacterCue(elements: ScreenplayElement[], index: number, settings: ScreenplaySettings) {
+export function renderedCharacterCue(elements: ScreenplayElement[], index: number, settings: ScreenplaySettings, contdText = "(CONT'D)") {
   const parsed = parseCharacter(elements[index]?.text ?? "");
   const extensions = [...parsed.extensions];
   const hasManualContinued = extensions.some((extension) => extension.replace(/[’`]/gu, "'").toLocaleUpperCase("en-GB") === "CONT'D");
-  if (automaticContinued(elements, index, settings) && !hasManualContinued) extensions.push("CONT'D");
+  if (automaticContinued(elements, index, settings) && !hasManualContinued) extensions.push(contdText.replace(/^\(|\)$/gu, ""));
   return [parsed.name, ...extensions.map((extension) => `(${extension})`)].filter(Boolean).join(" ");
 }
 

@@ -56,7 +56,8 @@ export function splitFormatted(text: string, offset: number): [string, string] {
 /** Replaces the visible range [start, end) with `insert`, styled as given (default: style of the preceding character). */
 export function replaceRange(text: string, start: number, end: number, insert: string, style?: StyleSet): string {
   const chars = charsOf(text);
-  const base = style ?? styleAt(chars, start);
+  // Replacing a range keeps the style of what's replaced (as in Word); inserting takes the style before the caret.
+  const base = style ?? (end > start && chars[start] ? { bold: chars[start].bold, italic: chars[start].italic, underline: chars[start].underline } : styleAt(chars, start));
   const added = insert.split("").map((unit) => ({ ch: unit, ...base }));
   return toFountain([...chars.slice(0, start), ...added, ...chars.slice(end)]);
 }

@@ -21,7 +21,9 @@ export const browserFontLoader: FontLoader = async (name) => {
   return new Uint8Array(await response.arrayBuffer());
 };
 
-const POINT = 72, FONT_SIZE = 12, LINE = 12, CELL = 7.2;
+const POINT = 72;
+// Set per document from layout.geometry.fontSize (Courier: 0.6 em per character).
+let FONT_SIZE = 12, LINE = 12, CELL = 7.2;
 
 interface Faces { regular: PDFFont; bold: PDFFont; italic: PDFFont; boldItalic: PDFFont; fallback: PDFFont; fallbackBold: PDFFont }
 
@@ -32,12 +34,18 @@ export interface PdfRenderOptions {
   includeRevisionMarks: boolean;
   /** Optional header text (e.g. "Blue Revision — 12/03/2026") printed top-left on every body page. */
   header?: string;
+  /** Document → Header and Footer. Tokens: {page} {pages} {title} {author} {date} {revision}. */
+  headerFooter?: import("../types").HeaderFooter;
+  revisionName?: string;
+  headerFromTop?: number;
+  footerFromBottom?: number;
   title?: string;
   author?: string;
   fontLoader?: FontLoader;
 }
 
 export async function renderPdf(layout: Layout, options: PdfRenderOptions): Promise<Uint8Array> {
+  FONT_SIZE = layout.geometry.fontSize ?? 12; LINE = FONT_SIZE; CELL = FONT_SIZE * 0.6;
   const pdf = await PDFDocument.create();
   pdf.registerFontkit(fontkit);
   const load = options.fontLoader ?? browserFontLoader;
@@ -67,12 +75,22 @@ export async function renderPdf(layout: Layout, options: PdfRenderOptions): Prom
 function drawPage(page: PDFPage, body: PageLayout, layout: Layout, faces: Faces, options: PdfRenderOptions) {
   const { heightIn, topIn } = layout.geometry;
   const height = heightIn * POINT;
-  const headerY = height - 0.5 * POINT - 9;
-  if (options.includePageNumbers) {
-    const label = pageNumberLabel(body, options.settings);
-    if (label) drawRuns(page, [{ text: label }], layout.geometry.rightIn * POINT - columnWidth(label) * CELL, headerY, faces);
-  }
-  if (options.header) drawRuns(page, [{ text: options.header }], 1.5 * POINT, headerY, faces);
+  const headerY = height - (options.headerFromTop ?? 0.5) * POINT - FONT_SIZE * 0.75;
+  const footerY = (options.footerFromBottom ?? 0.5) * POINT;
+  const label = options.includePageNumbers ? pageNumberLabel(body, options.settings) : undefined;
+  if (options.headerFooter) {
+    const showHere = options.headerFooter.showOnFirstPage || body.index > 1;
+    const fill = (text: string) => text.replace(/\{page\}/gu, label?.replace(/\.$/u, "") ?? "").replace(/\{pages\}/gu, String(layout.pages.length))
+      .replace(/\{title\}/gu, options.title ?? "").replace(/\{author\}/gu, options.author ?? "").replace(/\{date\}/gu, new Date().toLocaleDateString("en-GB"))
+      .replace(/\{revision\}/gu, options.revisionName ?? "").trim();
+    if (showHere) for (const [part, y] of [[options.headerFooter.header, headerY], [options.headerFooter.footer, footerY]] as const) {
+      const left = fill(part.left), centre = fill(part.center), right = fill(part.right);
+      if (left) drawRuns(page, [{ text: left }], 1.5 * POINT, y, faces);
+      if (centre) drawRuns(page, [{ text: centre }], (layout.geometry.widthIn * POINT - columnWidth(centre) * CELL) / 2, y, faces);
+      if (right) drawRuns(page, [{ text: right }], layout.geometry.rightIn * POINT - columnWidth(right) * CELL, y, faces);
+    }
+  } else if (label) drawRuns(page, [{ text: label }], layout.geometry.rightIn * POINT - columnWidth(label) * CELL, headerY, faces);
+  if (options.header && !options.headerFooter) drawRuns(page, [{ text: options.header }], 1.5 * POINT, headerY, faces);
   for (const line of body.lines) {
     drawLine(page, line, faces, height, topIn);
     const y = baseline(line.row, height, topIn);
@@ -85,7 +103,7 @@ function drawPage(page: PDFPage, body: PageLayout, layout: Layout, faces: Faces,
   }
 }
 
-const baseline = (row: number, pageHeight: number, topIn: number) => pageHeight - topIn * POINT - row * LINE - 9;
+const baseline = (row: number, pageHeight: number, topIn: number) => pageHeight - topIn * POINT - row * LINE - FONT_SIZE * 0.75;
 
 function drawLine(page: PDFPage, line: LayoutLine, faces: Faces, pageHeight: number, topIn: number) {
   const columns = line.runs.reduce((sum, run) => sum + columnWidth(run.text), 0);

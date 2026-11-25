@@ -1,3 +1,4 @@
+import { useEscape } from "./dialogs/Modal";
 
 import { useState } from "react";
 import type { ScreenplaySettings } from "../types";
@@ -6,13 +7,14 @@ const TABS = ["General", "Elements", "Scene Numbers", "Page Numbers", "Dialogue"
 type Tab = typeof TABS[number];
 
 export function ScreenplaySettingsDialog({ initial, onSave, onClose }: { initial: ScreenplaySettings; onSave(value: ScreenplaySettings): void; onClose(): void }) {
+  useEscape(onClose);
   const [value, setValue] = useState(() => structuredClone(initial));
   const [tab, setTab] = useState<Tab>("General");
   const patch = (section: Exclude<keyof ScreenplaySettings, "preset">, next: object) => setValue((current) => ({ ...current, [section]: { ...(current[section] as object), ...next } }));
   const check = (label: string, checked: boolean, change: (checked: boolean) => void, disabled = false) => <label className="check-label"><input type="checkbox" checked={checked} disabled={disabled} onChange={(event) => change(event.target.checked)}/><span>{label}</span></label>;
 
   return <div className="settings-backdrop" onMouseDown={onClose}><section className="screenplay-settings-dialog" role="dialog" aria-modal="true" aria-label="Screenplay Settings" onMouseDown={(event) => event.stopPropagation()}>
-    <header><div><p className="eyebrow">Project settings</p><h2>Screenplay Settings</h2></div><button className="icon-button" aria-label="Close screenplay settings" onClick={onClose}>Ã—</button></header>
+    <header><div><p className="eyebrow">Project settings</p><h2>Screenplay Settings</h2></div><button className="icon-button" aria-label="Close screenplay settings" onClick={onClose}>×</button></header>
     <div className="screenplay-settings-body"><nav aria-label="Screenplay settings sections">{TABS.map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}</nav>
       <div className="screenplay-settings-panel">
         {tab === "General" && <><h3>Screenplay preset</h3><label>Preset<select value={value.preset} onChange={(event) => setValue({ ...value, preset: event.target.value as ScreenplaySettings["preset"] })}><option value="spec-script">Spec Script</option><option value="shooting-script">Shooting Script</option><option value="uk-screenplay">UK Screenplay</option><option value="us-screenplay">US Screenplay</option><option value="custom">Custom</option></select></label><p className="setting-help">Presets establish safe defaults. Individual controls remain editable per project.</p></>}

@@ -93,7 +93,7 @@ const rtfExporter: Exporter = { format: "rtf", extension: "rtf", async export(co
 function crc32(data: Uint8Array) { let crc = 0xffffffff; for (const byte of data) { crc ^= byte; for (let i = 0; i < 8; i++) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1)); } return (crc ^ 0xffffffff) >>> 0; }
 function le(value: number, bytes: number) { const output = new Uint8Array(bytes); for (let i = 0; i < bytes; i++) output[i] = (value >>> (i * 8)) & 255; return output; }
 function concat(parts: Uint8Array[]) { const output = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0)); let offset = 0; for (const part of parts) { output.set(part, offset); offset += part.length; } return output; }
-function zip(files: Record<string, string>) {
+export function zip(files: Record<string, string>) {
   const local: Uint8Array[] = [], central: Uint8Array[] = []; let offset = 0;
   for (const [name, content] of Object.entries(files)) { const n = encoder.encode(name), d = encoder.encode(content), crc = crc32(d); const header = concat([le(0x04034b50,4),le(20,2),le(0,2),le(0,2),le(0,2),le(0,2),le(crc,4),le(d.length,4),le(d.length,4),le(n.length,2),le(0,2),n]); local.push(header,d); central.push(concat([le(0x02014b50,4),le(20,2),le(20,2),le(0,2),le(0,2),le(0,2),le(0,2),le(crc,4),le(d.length,4),le(d.length,4),le(n.length,2),le(0,2),le(0,2),le(0,2),le(0,2),le(0,4),le(offset,4),n])); offset += header.length + d.length; }
   const centralBytes = concat(central); return concat([...local, centralBytes, le(0x06054b50,4),le(0,2),le(0,2),le(central.length,2),le(central.length,2),le(centralBytes.length,4),le(offset,4),le(0,2)]);
@@ -128,6 +128,8 @@ const pdfExporter: Exporter = { format: "pdf", extension: "pdf", async export(co
     includeSceneNumbers: context.options.includeSceneNumbers, includeRevisionMarks: context.options.includeRevisionMarks,
     header: context.options.includeRevisionMarks ? revisionHeader(context.projectData) : undefined,
     title: context.project.manifest.title, author: context.project.manifest.author, fontLoader: context.fontLoader,
+    headerFooter: context.projectData.headerFooter, revisionName: revisionHeader(context.projectData),
+    headerFromTop: context.projectData.pageLayout?.headerFromTop, footerFromBottom: context.projectData.pageLayout?.footerFromBottom,
   });
   return result("pdf", "pdf", "application/pdf", bytes);
 } };

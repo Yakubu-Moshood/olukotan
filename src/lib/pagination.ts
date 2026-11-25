@@ -45,6 +45,8 @@ export interface PageGeometry {
   heightIn: number;
   topIn: number;
   linesPerPage: number;
+  /** Font size in points (Courier: 0.6 em per character, one line = font size). */
+  fontSize: number;
   /** Rightmost printable column edge for body text. */
   rightIn: number;
 }
@@ -57,7 +59,7 @@ export interface Layout {
   elementPage: Map<string, number>;
 }
 
-interface ElementSpec { left: number; right: number; before: number; align: "left" | "right" }
+interface ElementSpec { left: number; right: number; before: number; align: "left" | "right" | "center" }
 
 /** Final Draft–compatible default element indents (inches from page edge). */
 export const ELEMENT_SPECS: Record<ScreenplayElementType, ElementSpec> = {
@@ -75,10 +77,27 @@ export const ELEMENT_SPECS: Record<ScreenplayElementType, ElementSpec> = {
   "page-break": { left: 1.5, right: 7.5, before: 0, align: "left" },
 };
 
-export function pageGeometry(pageSize: "A4" | "US Letter"): PageGeometry {
+export function pageGeometry(pageSize: "A4" | "US Letter", layout?: ProjectData["pageLayout"], fontSize = 12): PageGeometry {
   const letter = pageSize === "US Letter";
   const widthIn = letter ? 8.5 : 210 / 25.4, heightIn = letter ? 11 : 297 / 25.4;
-  return { widthIn, heightIn, topIn: 1, linesPerPage: Math.floor((heightIn - 2) * 6), rightIn: 7.5 };
+  const top = layout?.top ?? 1, bottom = layout?.bottom ?? 1;
+  return { widthIn, heightIn, topIn: top, fontSize, linesPerPage: Math.max(10, Math.floor(((heightIn - top - bottom) * 72) / fontSize) + (layout?.linesAdjust ?? 0)), rightIn: 7.5 };
+}
+
+/** Element specs with the project's Format → Elements overrides applied. */
+export function elementSpecs(projectData?: ProjectData): Record<ScreenplayElementType, ElementSpec & { spacing: number; caps: boolean; style: Partial<TextRun> }> {
+  const out = {} as Record<ScreenplayElementType, ElementSpec & { spacing: number; caps: boolean; style: Partial<TextRun> }>;
+  for (const [type, base] of Object.entries(ELEMENT_SPECS) as [ScreenplayElementType, ElementSpec][]) {
+    const custom = projectData?.elementStyles?.[type] ?? {};
+    const sceneBefore = type === "scene-heading" ? projectData?.screenplaySettings.pagination.sceneHeadingSpacing ?? base.before : base.before;
+    out[type] = {
+      left: custom.left ?? base.left, right: custom.right ?? base.right, before: custom.spaceBefore ?? sceneBefore,
+      align: (custom.align === "center" ? "center" : custom.align ?? base.align) as ElementSpec["align"],
+      spacing: custom.spacing ?? 1, caps: custom.caps ?? false,
+      style: { ...(custom.bold ? { bold: true } : {}), ...(custom.italic ? { italic: true } : {}), ...(custom.underline ? { underline: true } : {}) },
+    };
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -159,7 +178,8 @@ const endsSentence = (runs: TextRun[]) => /[.!?…]["'”’)]*$|--$|—$/u.test
 // Blocks
 // ---------------------------------------------------------------------------
 
-interface BlockLine { element: ScreenplayElement; lineIndex: number; runs: TextRun[]; type: ScreenplayElementType; x: number; align: "left" | "right"; kind: LineKind; sceneNumber?: string; revisionMark?: string }
+interface BlockLine { element: ScreenplayElement; lineIndex: number; runs: TextRun[]; type: ScreenplayElementType; x: number; align: "left" | "right" | "center"; kind: LineKind; sceneNumber?: string; revisionMark?: string }
+type Specs = ReturnType<typeof elementSpecs>;
 
 interface Block {
   kind: "single" | "dialogue" | "dual" | "page-break";
@@ -184,16 +204,23 @@ export interface PaginationOptions {
   revisionMark?(element: ScreenplayElement): string | undefined;
 }
 
-function elementLines(element: ScreenplayElement, text: string, options: PaginationOptions, type: ScreenplayElementType = element.type, specs = ELEMENT_SPECS): BlockLine[] {
+function elementLines(element: ScreenplayElement, text: string, options: PaginationOptions, type: ScreenplayElementType = element.type, specs: Specs = elementSpecs(), fontSize = 12): (BlockLine | null)[] {
   const spec = specs[type];
-  const columns = Math.round((spec.right - spec.left) * 10);
-  const wrapped = wrapText(text, columns);
+  const format = element.metadata?.format;
+  const align = format?.align ?? spec.align;
+  const spacing = format?.spacing ?? spec.spacing;
+  const columns = Math.max(4, Math.round(((spec.right - spec.left) * 72) / (0.6 * fontSize)));
+  const wrapped = wrapText(spec.caps ? text.toLocaleUpperCase("en-GB") : text, columns).map((runs) => runs.map((run) => ({ ...spec.style, ...run })));
   const sceneNumber = type === "scene-heading" ? options.sceneNumber?.(element) : undefined;
   const revisionMark = options.revisionMark?.(element);
-  return wrapped.map((runs, index) => ({
-    element, lineIndex: index, runs, type, x: spec.align === "right" ? spec.right : spec.left, align: spec.align, kind: "body" as const,
-    ...(index === 0 && sceneNumber ? { sceneNumber } : {}), ...(revisionMark ? { revisionMark } : {}),
-  }));
+  const x = align === "right" ? spec.right : align === "center" ? (spec.left + spec.right) / 2 : spec.left;
+  const out: (BlockLine | null)[] = [];
+  wrapped.forEach((runs, index) => {
+    if (index && (spacing === 2 || (spacing === 1.5 && index % 2 === 0))) out.push(null);
+    out.push({ element, lineIndex: index, runs, type, x, align, kind: "body" as const,
+      ...(index === 0 && sceneNumber ? { sceneNumber } : {}), ...(revisionMark ? { revisionMark } : {}) });
+  });
+  return out;
 }
 
 function shiftDual(lines: BlockLine[], side: 0 | 1): BlockLine[] {
@@ -203,9 +230,9 @@ function shiftDual(lines: BlockLine[], side: 0 | 1): BlockLine[] {
   return lines.map((line) => ({ ...line, x: line.x + offset }));
 }
 
-function buildBlocks(document: ScreenplayDocument, projectData: ProjectData, options: PaginationOptions): Block[] {
+function buildBlocks(document: ScreenplayDocument, projectData: ProjectData, options: PaginationOptions, specs: Specs, fontSize: number): Block[] {
   const settings = projectData.screenplaySettings;
-  const sceneHeadingBefore = settings.pagination.sceneHeadingSpacing ?? 2;
+  const sceneHeadingBefore = specs["scene-heading"].before;
   const omittedScene = (element: ScreenplayElement) => element.metadata?.sceneId ? projectData.scenes.find((scene) => scene.sceneId === element.metadata!.sceneId)?.omitted : false;
   const elements = document.elements;
   const blocks: Block[] = [];
@@ -219,7 +246,7 @@ function buildBlocks(document: ScreenplayDocument, projectData: ProjectData, opt
       if (skippingOmitted) {
         // Omitted scenes keep their number and print as OMITTED (Final Draft behaviour).
         blocks.push({ kind: "single", type: "scene-heading", before: sceneHeadingBefore, sceneId: currentSceneId,
-          lines: elementLines(element, "OMITTED", options) });
+          lines: elementLines(element, "OMITTED", options, "scene-heading", specs, fontSize) });
         continue;
       }
     } else if (skippingOmitted) continue;
@@ -228,12 +255,12 @@ function buildBlocks(document: ScreenplayDocument, projectData: ProjectData, opt
     if (element.type === "note" && !options.includeNotes) continue;
     if (!element.text.trim()) continue;
     if (element.type === "character") {
-      const group: (BlockLine | null)[] = [...elementLines(element, renderedCharacterCue(elements, i, settings), options)];
+      const group: (BlockLine | null)[] = [...elementLines(element, renderedCharacterCue(elements, i, settings, projectData.moresContinueds?.contd), options, "character", specs, fontSize)];
       const characterName = parseCharacter(element.text).name;
       let j = i + 1;
       for (; j < elements.length && ["parenthetical", "dialogue"].includes(elements[j].type); j++) {
         if (!elements[j].text.trim()) continue;
-        group.push(...elementLines(elements[j], elements[j].text, options));
+        group.push(...elementLines(elements[j], elements[j].text, options, elements[j].type, specs, fontSize));
       }
       const dualId = element.metadata?.dualDialogueGroupId;
       const previous = blocks.at(-1);
@@ -242,13 +269,13 @@ function buildBlocks(document: ScreenplayDocument, projectData: ProjectData, opt
         const right = shiftDual(group.filter(Boolean) as BlockLine[], 1);
         blocks[blocks.length - 1] = { kind: "dual", type: "character", before: previous.before, columns: [left, right], lines: [], sceneId: currentSceneId };
       } else {
-        blocks.push({ kind: "dialogue", type: "character", before: ELEMENT_SPECS.character.before, lines: group, sceneId: currentSceneId, characterName });
+        blocks.push({ kind: "dialogue", type: "character", before: element.metadata?.format?.spaceBefore ?? specs.character.before, lines: group, sceneId: currentSceneId, characterName });
       }
       i = j - 1; continue;
     }
-    const before = element.type === "scene-heading" ? sceneHeadingBefore : ELEMENT_SPECS[element.type].before;
+    const before = element.metadata?.format?.spaceBefore ?? (element.type === "scene-heading" ? sceneHeadingBefore : specs[element.type].before);
     const text = element.type === "note" ? `[[${element.text}]]` : element.text;
-    blocks.push({ kind: "single", type: element.type, before, lines: elementLines(element, text, options), sceneId: currentSceneId });
+    blocks.push({ kind: "single", type: element.type, before, lines: elementLines(element, text, options, element.type, specs, fontSize), sceneId: currentSceneId });
   }
   return blocks;
 }
@@ -259,7 +286,10 @@ function buildBlocks(document: ScreenplayDocument, projectData: ProjectData, opt
 
 export function paginate(document: ScreenplayDocument, projectData: ProjectData, options: PaginationOptions = {}): Layout {
   const settings: ScreenplaySettings = projectData.screenplaySettings;
-  const geometry = pageGeometry(settings.pagination.pageSize);
+  const fontSize = projectData.font?.size ?? 12;
+  const geometry = pageGeometry(settings.pagination.pageSize, projectData.pageLayout, fontSize);
+  const specs = elementSpecs(projectData);
+  const texts = { more: "(MORE)", contd: "(CONT'D)", sceneBottom: "(CONTINUED)", sceneTop: "CONTINUED:", ...projectData.moresContinueds };
   const sceneContinued = settings.continueds.sceneContinued;
   const capacity = geometry.linesPerPage - (sceneContinued !== "off" ? 1 : 0);
   const pages: PageLayout[] = [];
@@ -278,7 +308,7 @@ export function paginate(document: ScreenplayDocument, projectData: ProjectData,
   /** Starts the page a locked start belongs to, labelling it with its locked number. */
   function lockedBreak(label: string, midScene: boolean, more?: BlockLine) {
     if (row > 0 || page.lines.length) {
-      if (more) { row = Math.min(row, capacity - 1); place({ ...more, runs: [{ text: "(MORE)" }], kind: "more", type: "character", x: ELEMENT_SPECS.character.left, align: "left" }); }
+      if (more) { row = Math.min(row, capacity - 1); place({ ...more, runs: [{ text: texts.more }], kind: "more", type: "character", x: specs.character.left, align: "left" }); }
       breakPage(midScene);
     }
     page.label = label; lockBase = label; lockSuffix = 0;
@@ -296,19 +326,19 @@ export function paginate(document: ScreenplayDocument, projectData: ProjectData,
 
   function breakPage(midScene: boolean) {
     if (midScene && sceneContinued !== "off" && activeScene) {
-      page.lines.push({ row: geometry.linesPerPage - 1, x: ELEMENT_SPECS.transition.right, align: "right", runs: [{ text: "(CONTINUED)" }], type: "transition", kind: "scene-continued-bottom" });
+      page.lines.push({ row: geometry.linesPerPage - 1, x: specs.transition.right, align: "right", runs: [{ text: texts.sceneBottom }], type: "transition", kind: "scene-continued-bottom" });
     }
     pages.push(page);
     page = newPage(pages.length + 1);
     row = 0;
     if (midScene && sceneContinued === "top-and-bottom" && activeScene) {
       const count = (continuedCount.get(activeScene) ?? 1) + 1; continuedCount.set(activeScene, count);
-      page.lines.push({ row: 0, x: ELEMENT_SPECS.action.left, align: "left", runs: [{ text: count > 2 ? `CONTINUED: (${count - 1})` : "CONTINUED:" }], type: "action", kind: "scene-continued-top" });
+      page.lines.push({ row: 0, x: specs.action.left, align: "left", runs: [{ text: count > 2 ? `${texts.sceneTop} (${count - 1})` : texts.sceneTop }], type: "action", kind: "scene-continued-top" });
       row = 2;
     }
   }
 
-  const blocks = buildBlocks(document, projectData, options);
+  const blocks = buildBlocks(document, projectData, options, specs, fontSize);
   const remaining = () => capacity - row;
 
   for (let b = 0; b < blocks.length; b++) {
@@ -321,12 +351,14 @@ export function paginate(document: ScreenplayDocument, projectData: ProjectData,
         const head: Block = { ...block, lines: block.lines.slice(0, at), moreAfter: block.kind === "dialogue" };
         const cue = block.lines[0] as BlockLine;
         const tailLines = block.lines.slice(at);
-        const tail: Block = { ...block, before: 0, lines: block.kind === "dialogue" ? [{ ...cue, runs: [{ text: continuedCue(runsText(cue.runs)) }], kind: "contd-cue", lineIndex: -1 }, ...tailLines] : tailLines };
+        const tail: Block = { ...block, before: 0, lines: block.kind === "dialogue" ? [{ ...cue, runs: [{ text: continuedCue(runsText(cue.runs), texts.contd) }], kind: "contd-cue", lineIndex: -1 }, ...tailLines] : tailLines };
         blocks.splice(b, 1, head, tail); b--; continue;
       }
       const first = (block.kind === "dual" ? block.columns![0][0] : block.lines.find((line) => line && line.kind !== "contd-cue")) as BlockLine | undefined;
       const label = first && first.lineIndex >= 0 ? locks.get(`${first.element.id}:${first.lineIndex}`) : undefined;
-      if (label !== undefined && (label !== page.label || page.lines.length)) {
+      // Always (re)arm the lock here — even on page 1, where the page already carries this label —
+      // so pages overflowing from it become A-pages.
+      if (label !== undefined && (label !== page.label || page.lines.length || lockBase !== label)) {
         const previous = blocks[b - 1];
         lockedBreak(label, block.type !== "scene-heading", previous?.moreAfter ? previous.lines[0] as BlockLine : undefined);
       }
@@ -361,7 +393,7 @@ export function paginate(document: ScreenplayDocument, projectData: ProjectData,
 
     if (need + keep <= remaining() || (block.moreAfter && need + 1 <= remaining())) {
       row += before; lines.forEach(place);
-      if (block.moreAfter) place({ ...(lines[0] as BlockLine), runs: [{ text: "(MORE)" }], kind: "more", type: "character", x: ELEMENT_SPECS.character.left, align: "left" });
+      if (block.moreAfter) place({ ...(lines[0] as BlockLine), runs: [{ text: texts.more }], kind: "more", type: "character", x: specs.character.left, align: "left" });
       continue;
     }
 
@@ -373,15 +405,15 @@ export function paginate(document: ScreenplayDocument, projectData: ProjectData,
         row += before;
         lines.slice(0, split).forEach(place);
         const cue = lines[0] as BlockLine;
-        place({ ...cue, runs: [{ text: "(MORE)" }], kind: "more", type: "character", x: ELEMENT_SPECS.character.left, align: "left" });
+        place({ ...cue, runs: [{ text: texts.more }], kind: "more", type: "character", x: specs.character.left, align: "left" });
         breakPage(true);
-        const contdText = settings.continueds.dialogueContinued !== false ? continuedCue(runsText(cue.runs)) : runsText(cue.runs);
+        const contdText = settings.continueds.dialogueContinued !== false ? continuedCue(runsText(cue.runs), texts.contd) : runsText(cue.runs);
         const rest = lines.slice(split);
         blocks.splice(b + 1, 0, { ...block, before: 0, lines: [{ ...cue, runs: [{ text: contdText }], kind: "contd-cue" }, ...rest] });
         continue;
       }
     } else if (block.kind === "single" && ["action", "general"].includes(block.type)) {
-      const split = paragraphSplit(lines as BlockLine[], available, lines.length > capacity);
+      const split = paragraphSplit(lines, available, lines.length > capacity);
       if (split !== undefined) {
         row += before;
         lines.slice(0, split).forEach(place);
@@ -441,8 +473,8 @@ export function lockPages(layout: Layout): LockedPageStart[] {
 }
 
 /** Appends (CONT'D) to a character cue unless it already carries one. */
-export function continuedCue(cue: string) {
-  return /\(CONT['’]D\)/iu.test(cue) ? cue : `${cue} (CONT'D)`;
+export function continuedCue(cue: string, contd = "(CONT'D)") {
+  return /\(CONT['’]D\)/iu.test(cue) || cue.includes(contd) ? cue : `${cue} ${contd}`;
 }
 
 /**
@@ -469,9 +501,9 @@ function dialogueSplit(lines: (BlockLine | null)[], available: number): number |
   return fallback;
 }
 
-function paragraphSplit(lines: BlockLine[], available: number, mustSplit: boolean): number | undefined {
+function paragraphSplit(lines: (BlockLine | null)[], available: number, mustSplit: boolean): number | undefined {
   const maxKeep = Math.min(available, lines.length - 2);
-  for (let keep = maxKeep; keep >= 2; keep--) if (endsSentence(lines[keep - 1].runs)) return keep;
+  for (let keep = maxKeep; keep >= 2; keep--) { const line = lines[keep - 1]; if (line && endsSentence(line.runs)) return keep; }
   if (mustSplit && maxKeep >= 2) return maxKeep;
   return undefined;
 }
