@@ -1,4 +1,4 @@
-import { splitFormatted } from "./rich-text";
+import { splitFormatted, visibleText } from "./rich-text";
 
 export type ScreenplayElementType =
   | "scene-heading" | "action" | "character" | "parenthetical" | "dialogue"
@@ -109,8 +109,9 @@ export function characterCueText(name: string, extensions: string[]) {
   return [name.trim().toLocaleUpperCase("en-GB"), ...extensions.map((extension) => `(${extension.trim().toLocaleUpperCase("en-GB")})`)].filter(Boolean).join(" ");
 }
 
-export function isSceneHeading(text: string) { return SCENE_PATTERN.test(text.trim()); }
-export function isTransition(text: string) { return COMMON_TRANSITIONS.includes(text.trim().toLocaleUpperCase("en-GB")); }
+// Bold/italic/underline markers never change what an element is.
+export function isSceneHeading(text: string) { return SCENE_PATTERN.test(visibleText(text).trim()); }
+export function isTransition(text: string) { return COMMON_TRANSITIONS.includes(visibleText(text).trim().toLocaleUpperCase("en-GB")); }
 export function isShot(text: string) {
   const upper = text.trim().toLocaleUpperCase("en-GB");
   return COMMON_SHOTS.some((shot) => upper === shot || upper.startsWith(`${shot} `));
@@ -174,7 +175,7 @@ export function updateElementText(elements: ScreenplayElement[], index: number, 
   // Typing edits text only. Action-to-Character (or any other structural
   // transition) belongs to an explicit commit event such as Enter, Tab,
   // autocomplete acceptance, a shortcut, or the element selector.
-  if (type === "action" && COMMITTED_SCENE_PREFIX.test(rawText.trimStart())) type = "scene-heading";
+  if (type === "action" && COMMITTED_SCENE_PREFIX.test(visibleText(rawText).trimStart())) type = "scene-heading";
   else if (type === "dialogue" && rawText.trimStart().startsWith("(")) type = "parenthetical";
   const text = normalizeElementText(type, rawText);
   const metadata = type === "character" ? (() => { const value = parseCharacter(text); return { ...current.metadata, characterName: value.name, characterExtension: value.extension, characterExtensions: value.extensions }; })() : current.metadata;

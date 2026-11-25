@@ -2,6 +2,7 @@ import type { ProjectData } from "../types";
 import type { Layout } from "./pagination";
 import { parseCharacter, type ScreenplayDocument, type ScreenplayElement } from "./screenplay-elements";
 import { sceneHeadingParts } from "./screenplay-production";
+import { visibleText } from "./rich-text";
 
 export interface SceneRow {
   sceneId: string;
@@ -50,7 +51,7 @@ export function sceneIndex(document: ScreenplayDocument, projectData: ProjectDat
     const eighths = layout ? Math.max(1, Math.ceil((lines / linesPerPage) * 8)) : 0;
     const parts = sceneHeadingParts(element.text);
     rows.push({
-      sceneId, elementIndex: index, endIndex, ordinal: ordinal + 1, number: meta?.number, heading: element.text,
+      sceneId, elementIndex: index, endIndex, ordinal: ordinal + 1, number: meta?.number, heading: visibleText(element.text),
       intExt: parts.intExt, location: parts.location, timeOfDay: parts.timeOfDay,
       page: layout ? pageLabelFor(layout, element) : undefined, lines, eighths, length: formatEighths(eighths),
       summary: meta?.summary, colour: meta?.colour, omitted: Boolean(meta?.omitted || element.metadata?.omitted),

@@ -22,7 +22,7 @@ function stableId() {
 }
 
 export function sceneHeadingParts(heading: string) {
-  const match = heading.trim().match(/^(INT\.\/EXT\.|EXT\.\/INT\.|INT\.|EXT\.|I\/E\.|EST\.)\s*(.*?)(?:\s+-\s+([^-]+))?$/iu);
+  const match = heading.replace(/\\([*_\\])/gu, "$1").replace(/[*_]/gu, "").trim().match(/^(INT\.\/EXT\.|EXT\.\/INT\.|INT\.|EXT\.|I\/E\.|EST\.)\s*(.*?)(?:\s+-\s+([^-]+))?$/iu);
   return { intExt: match?.[1]?.toLocaleUpperCase("en-GB"), location: match?.[2]?.trim(), timeOfDay: match?.[3]?.trim() };
 }
 

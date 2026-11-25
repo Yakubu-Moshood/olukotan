@@ -86,7 +86,7 @@ export function Editor(props: EditorProps) {
   const [view, setView] = useState<"script" | "cards" | "beats">("script");
   const [split, setSplit] = useState<"none" | "vertical" | "horizontal">("none");
   const [splitPane, setSplitPane] = useState<"cards" | "beats">("cards");
-  const [showNavigator, setShowNavigator] = useState(true);
+  const [showNavigator, setShowNavigator] = useState(false);
   const [showProperties, setShowProperties] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
   const [zoom, setZoom] = useState(settings.zoom ?? 100);

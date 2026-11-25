@@ -192,3 +192,12 @@ describe("structured Fountain round trip", () => {
     expect(parseFountain(fountain).elements[0]).toMatchObject({ type: "action", text: "NO ENTRY" });
   });
 });
+
+describe("formatted scene headings", () => {
+  it("recognises bold/underlined headings when typing and after reopening", () => {
+    const typed = updateElementText([createElement("action", "")], 0, "**_INT. OZIEGBE'S FAMILY HOUSE - DAY_**");
+    expect(typed.elements[0].type).toBe("scene-heading");
+    const reopened = parseFountain(serializeFountain({ preamble: "", elements: typed.elements }));
+    expect(reopened.elements[0].type).toBe("scene-heading");
+  });
+});
