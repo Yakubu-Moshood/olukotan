@@ -4,6 +4,10 @@ import { wordCount } from "../lib/screenplay";
 import { paginate } from "../lib/pagination";
 import { revisionMarkFor } from "../lib/revisions";
 import { TitlePageDialog } from "./TitlePageDialog";
+import { IndexCards, Navigator } from "./Navigator";
+import { BeatBoard } from "./BeatBoard";
+import { moveScene, sceneIndex, type SceneRow } from "../lib/scene-index";
+import type { Beat } from "../types";
 import { automaticContinued, autocompleteSuggestions, displaySceneNumber, getAutocompleteContext, removeSceneNumbers, renderedCharacterCue, synchroniseSceneMetadata } from "../lib/screenplay-production";
 import {
   ELEMENT_LABELS, SCENE_PREFIXES, TIMES_OF_DAY, applyEnter, applyTab, collectKnownCharacters,
@@ -111,6 +115,36 @@ export function Editor({ project, content, dirty, saving, message, onChange, onP
   };
   const [titlePageOpen, setTitlePageOpen] = useState(false);
   const pageView = projectData.screenplaySettings.pagination.viewMode === "page";
+  const [view, setView] = useState<"script" | "cards" | "beats">("script");
+  const sceneRows = useMemo(() => sceneIndex(deferredDocument, projectData, layout), [deferredDocument, projectData, layout]);
+  const jumpToScene = (row: SceneRow) => {
+    const index = document.elements.findIndex((element) => element.metadata?.sceneId === row.sceneId);
+    if (index < 0) return;
+    setView("script"); setActiveIndex(index); focusRequest.current = { index, cursor: 0 }; setDocument({ ...document });
+  };
+  const reorderScene = (sceneId: string, beforeSceneId: string | null) => {
+    const moved = moveScene(document, sceneId, beforeSceneId); if (moved === document) return;
+    const index = moved.elements.findIndex((element) => element.metadata?.sceneId === sceneId);
+    commitDocument(moved, view === "script" ? { index, cursor: 0 } : undefined);
+  };
+  const updateScene = (sceneId: string, patch: { summary?: string; colour?: string }) => {
+    const scenes = projectData.scenes.map((scene) => scene.sceneId === sceneId ? { ...scene, ...patch } : scene);
+    commitDocument(document, undefined, true, { ...projectData, scenes });
+  };
+  const updateBeats = (beats: Beat[]) => commitDocument(document, undefined, false, { ...projectData, beats });
+  const sceneFromBeat = (beat: Beat) => {
+    const heading = createElement("scene-heading", "INT. LOCATION - DAY");
+    const action = createElement("action", beat.body ?? beat.title);
+    // A brand-new script starts with one empty scene heading; replace it rather than leaving it dangling.
+    const blankStart = document.elements.length === 1 && !document.elements[0].text.trim();
+    const elements = [...(blankStart ? [] : document.elements), heading, action];
+    const prepared = synchroniseSceneMetadata({ ...document, elements }, projectData);
+    const sceneId = prepared.document.elements.find((element) => element.id === heading.id)?.metadata?.sceneId;
+    const data = { ...prepared.projectData, scenes: prepared.projectData.scenes.map((scene) => scene.sceneId === sceneId ? { ...scene, summary: beat.title, colour: beat.colour } : scene),
+      beats: projectData.beats.map((item) => item.id === beat.id && sceneId ? { ...item, sceneIds: [...new Set([...(item.sceneIds ?? []), sceneId])] } : item) };
+    setView("script");
+    commitDocument(prepared.document, { index: prepared.document.elements.findIndex((element) => element.id === heading.id), cursor: 0 }, true, data);
+  };
   const scenes = useMemo(() => document.elements.map((element, index) => ({ element, index })).filter(({ element }) => element.type === "scene-heading" && element.text), [document.elements]);
 
   const changeType = (type: ScreenplayElementType, index = activeIndex) => {
@@ -250,11 +284,11 @@ export function Editor({ project, content, dirty, saving, message, onChange, onP
     <header className="app-bar"><div className="app-left"><button className="icon-button" onClick={onHome} aria-label="Back to home"><ArrowLeft size={19}/></button><span className="mini-wordmark">OLUKOTAN</span><span className="divider"/><div><strong>{project.manifest.title}</strong><small>{dirty ? "Unsaved changes" : message || "Saved locally"}</small></div></div>
       <div className="app-actions"><span className="offline"><WifiOff size={15}/> Offline</span><button className="secondary compact" onClick={onSave} disabled={!dirty || saving || project.readOnly}><Save size={16}/>{saving ? "Saving…" : "Save"}</button><button className="icon-button" aria-label="Screenplay settings" onClick={() => setScreenplaySettingsOpen(true)}><Settings size={19}/></button></div>
     </header>
-    <aside className="left-sidebar"><div className="panel-heading"><span>Scenes</span><button className="icon-button" aria-label="Collapse scene navigator"><PanelLeftClose size={17}/></button></div><div className="scene-search"><Search size={15}/><input placeholder="Search scenes" aria-label="Search scenes"/></div>
-      <nav className="scene-list" aria-label="Scene navigator">{scenes.length ? scenes.map(({ element, index }) => <button key={element.metadata?.sceneId ?? element.id} onClick={() => { setActiveIndex(index); focusRequest.current = { index, cursor: 0 }; setDocument({ ...document }); }}><span>{displaySceneNumber(element, projectData) ?? ""}</span><strong>{element.text}</strong></button>) : <p>Your scene headings will appear here.<br/><br/>Start typing: <strong>INT.</strong></p>}</nav>
+    <aside className="left-sidebar"><div className="panel-heading"><span>Scenes</span><button className="icon-button" aria-label="Collapse scene navigator"><PanelLeftClose size={17}/></button></div><Navigator rows={sceneRows} activeSceneId={activeScene?.metadata?.sceneId} onJump={jumpToScene} onMove={reorderScene} onUpdate={updateScene}/>
       <button className="folder-link" onClick={() => project.projectPath.startsWith("browser://") ? setExportOpen(true) : onReveal()}><FolderOpen size={16}/> {project.projectPath.startsWith("browser://") ? "Export screenplay…" : "Open project folder"}</button>
     </aside>
     <main className="writing-area"><div className="editor-toolbar">
+      <div className="view-switch" role="tablist" aria-label="View">{([["script", "Script"], ["cards", "Index Cards"], ["beats", "Beat Board"]] as const).map(([value, label]) => <button key={value} role="tab" aria-selected={view === value} className={view === value ? "active" : ""} onClick={() => setView(value)}>{label}</button>)}</div>
       <div className="menu-control"><button onClick={() => { setFileMenuOpen((open) => !open); setProductionMenuOpen(false); }}>File</button>{fileMenuOpen && <div className="app-menu" role="menu"><button role="menuitem" onClick={() => { setTitlePageOpen(true); setFileMenuOpen(false); }}>Title Page…</button><button role="menuitem" onClick={() => { setExportOpen(true); setFileMenuOpen(false); }}>Export…</button><button role="menuitem" onClick={() => { setExportOpen(true); setFileMenuOpen(false); }}>Export As…</button><button role="menuitem" onClick={() => { setExportOpen(true); setFileMenuOpen(false); }}>Save Copy As…</button></div>}</div>
       <div className="menu-control"><button onClick={() => { setProductionMenuOpen((open) => !open); setFileMenuOpen(false); }}>Production</button>{productionMenuOpen && <div className="app-menu" role="menu"><button role="menuitem" disabled={!scenes.length} onClick={numberScenes}>Number Scenes…</button><button role="menuitem" disabled={!projectData.scenes.some((scene) => scene.number)} onClick={removeNumbers}>Remove Scene Numbers…</button><button role="menuitem" disabled={!scenes.length} onClick={renumberScenes}>Renumber Scenes…</button><button role="menuitem" disabled={!projectData.scenes.some((scene) => scene.number) || projectData.screenplaySettings.sceneNumbers.mode === "locked"} onClick={lockSceneNumbers}>Lock Scene Numbers</button><button role="menuitem" disabled={projectData.screenplaySettings.sceneNumbers.mode !== "locked"} onClick={unlockSceneNumbers}>Unlock Scene Numbers</button><button role="menuitem" disabled={!activeScene} onClick={setCurrentSceneNumber}>Set Current Scene Number…</button></div>}</div>
       <select aria-label="Screenplay element" value={active?.type ?? "action"} onChange={(event) => changeType(event.target.value as ScreenplayElementType)}>{SELECTABLE_TYPES.map((type) => <option key={type} value={type}>{ELEMENT_LABELS[type]}</option>)}</select>
@@ -262,7 +296,9 @@ export function Editor({ project, content, dirty, saving, message, onChange, onP
       <button className="icon-button" aria-label="Undo" onClick={undo} disabled={!history.current.past.length}><Undo2 size={16}/></button><button className="icon-button" aria-label="Redo" onClick={redo} disabled={!history.current.future.length}><Redo2 size={16}/></button><button className="icon-button" aria-label="Command palette" onClick={() => setPaletteOpen(true)}><Command size={16}/></button>
       <span/><button className="icon-button" aria-label="Previous page" disabled={activePage <= 1} onClick={() => goToPage(activePage - 1)}><ChevronLeft size={17}/></button><strong>Page {layout.pages[activePage - 1]?.label ?? activePage} of {pages}</strong><button className="icon-button" aria-label="Next page" disabled={activePage >= pages} onClick={() => goToPage(activePage + 1)}><ChevronRight size={17}/></button></div>
       {project.readOnly && <div className="read-only">Read-only mode — this folder cannot be written to. Your original files are unchanged.</div>}
-      <div className="page-wrap"><div className="paper screenplay-paper" role="textbox" aria-label="Screenplay editor" aria-multiline="true">
+      {view === "cards" && <IndexCards rows={sceneRows} onJump={jumpToScene} onMove={reorderScene} onUpdate={updateScene}/>}
+      {view === "beats" && <BeatBoard beats={projectData.beats} scenes={sceneRows} onChange={updateBeats} onCreateScene={sceneFromBeat} onJump={jumpToScene}/>}
+      <div className="page-wrap" hidden={view !== "script"}><div className="paper screenplay-paper" role="textbox" aria-label="Screenplay editor" aria-multiline="true">
         {document.elements.map((element, index) => <PageAware key={element.id} show={pageView} page={layout.elementPage.get(element.id)} previous={index ? pageOf(index - 1) : undefined} label={(page) => layout.pages[page - 1]?.label ?? String(page)}><div className={`screenplay-block screenplay-${element.type} ${element.type === "character" ? "character-cue" : ""} ${index === activeIndex ? "is-active" : ""}`} data-element-type={element.type} data-rendered-cue={element.type === "character" ? renderedCharacterCue(document.elements, index, projectData.screenplaySettings) : undefined}>
           {element.type === "scene-heading" && displaySceneNumber(element, projectData) && projectData.screenplaySettings.sceneNumbers.showInEditor && ["left", "both"].includes(projectData.screenplaySettings.sceneNumbers.position) && (projectData.screenplaySettings.sceneNumbers.mode === "manual" ? <input className="scene-number-input scene-number-left" aria-label={`Scene number ${index + 1}`} value={displaySceneNumber(element, projectData)} onFocus={() => setActiveIndex(index)} onChange={(event) => updateSceneNumber(index, event.target.value.replace(/#/g, ""))}/> : <span className="scene-number-gutter scene-number-left">{displaySceneNumber(element, projectData)}</span>)}
           {element.type === "scene-heading" && displaySceneNumber(element, projectData) && projectData.screenplaySettings.sceneNumbers.showInEditor && ["right", "both"].includes(projectData.screenplaySettings.sceneNumbers.position) && <span className="scene-number-gutter scene-number-right">{displaySceneNumber(element, projectData)}</span>}
