@@ -1,6 +1,6 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { wordCount } from "../lib/screenplay";
-import { elementSpecs, lockPages, paginate, type LayoutLine } from "../lib/pagination";
+import { elementSpecs, lockPages, paginate, relockFromPage, type LayoutLine } from "../lib/pagination";
 import { pageViewGroups } from "../lib/page-view";
 import { applyRevisionMarks, clearRevisionMarks, nextRevisionSet, revisionMarkFor, revisionSetById } from "../lib/revisions";
 import { ReportsDialog } from "./ReportsDialog";
@@ -462,6 +462,20 @@ export function Editor(props: EditorProps) {
     commitDocument({ ...document, elements }, keepFocus(), true, { ...projectData, pageLock: { locked: true, lockedAt: new Date().toISOString(), pageStarts: starts } });
     setNotice(relabel ? "A-pages folded into the page sequence and pages re-locked." : `Pages locked (${starts.length}). New material will create A-pages.`);
   };
+  /** Re-lock Pages from Here: keeps every page before the one with the cursor exactly as issued. */
+  const relockFromHere = () => {
+    const fragments = active ? layout.fragments.get(active.id) : undefined;
+    const cursor = activeHandle()?.selectionStart ?? 0;
+    const fromPage = fragments ? ([...fragments].reverse().find((fragment) => fragment.start <= cursor)?.page ?? fragments[0].page) : activePage;
+    const starts = relockFromPage(document, projectData, {
+      lockedPages: projectData.pageLock.pageStarts,
+      sceneNumber: (element) => projectData.scenes.find((scene) => scene.sceneId === element.metadata?.sceneId)?.number,
+    }, fromPage);
+    const anchorIds = new Set(starts.map((start) => start.elementId));
+    const elements = document.elements.map((element) => anchorIds.has(element.id) && !element.metadata?.anchor ? { ...element, metadata: { ...element.metadata, anchor: true } } : element);
+    commitDocument({ ...document, elements }, keepFocus(), true, { ...projectData, pageLock: { locked: true, lockedAt: new Date().toISOString(), pageStarts: starts } });
+    setNotice(`Pages re-locked from page ${layout.pages[fromPage - 1]?.label ?? fromPage}. Earlier pages are unchanged.`);
+  };
   const unlockAllPages = () => setConfirm({ title: "Unlock All Pages", message: "The script will reflow and page numbers will no longer match pages already issued.", confirmLabel: "Unlock All Pages", danger: true, onConfirm: () => commitData({ ...projectData, pageLock: { locked: false, pageStarts: [] } }) });
   const unlockAPages = () => setConfirm({ title: "Unlock \"A\" Pages", message: "A-pages (12A, 12B…) will be folded into ordinary page numbers and pages re-locked from here. Pages already issued may change number.", confirmLabel: "Unlock A Pages", onConfirm: () => lockPagesNow(true) });
 
@@ -745,7 +759,7 @@ export function Editor(props: EditorProps) {
         { id: "prod.lockScenes", label: "Lock Scene Numbers", run: lockSceneNumbers, disabled: projectData.screenplaySettings.sceneNumbers.mode === "locked" },
         { id: "prod.unlockScenes", label: "Unlock Scene Numbers", run: unlockSceneNumbers, disabled: projectData.screenplaySettings.sceneNumbers.mode !== "locked" },
         { id: "prod.removeNumbers", label: "Remove Scene Numbers…", run: removeNumbers, disabled: !projectData.scenes.some((scene) => scene.number) },
-        { id: "prod.relock", label: "Re-lock Pages from Here", run: () => lockPagesNow(true), disabled: !projectData.pageLock.locked },
+        { id: "prod.relock", label: "Re-lock Pages from Here", run: relockFromHere, disabled: !projectData.pageLock.locked },
       ] },
     ] },
     { id: "window", label: "Window", items: [

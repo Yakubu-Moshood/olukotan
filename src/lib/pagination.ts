@@ -343,7 +343,8 @@ export function paginate(document: ScreenplayDocument, projectData: ProjectData,
   /** Starts the page a locked start belongs to, labelling it with its locked number. */
   function lockedBreak(label: string, midScene: boolean, more?: BlockLine) {
     if (row > 0 || page.lines.length) {
-      if (more) { row = Math.min(row, capacity - 1); place({ ...more, runs: [{ text: texts.more }], kind: "more", type: "character", x: specs.character.left, align: "left" }); }
+      // The head of the speech may already have printed its (MORE).
+      if (more && page.lines.at(-1)?.kind !== "more") { row = Math.min(row, capacity - 1); place({ ...more, runs: [{ text: texts.more }], kind: "more", type: "character", x: specs.character.left, align: "left" }); }
       breakPage(midScene);
     }
     page.label = label; lockBase = label; lockSuffix = 0;
@@ -385,7 +386,9 @@ export function paginate(document: ScreenplayDocument, projectData: ProjectData,
     if (block.kind === "page-break") { if (row > 0) breakPage(false); continue; }
     if (locks.size) {
       const at = block.kind === "dual" ? -1 : block.lines.findIndex((line) => line && locks.has(`${line.element.id}:${line.lineIndex}`));
-      if (at > 0) {
+      // Split only when real lines precede the lock: the tail of a split speech starts with its
+      // NAME (CONT'D) line, and splitting there again would never end.
+      if (at > 0 && block.lines.slice(0, at).some((line) => line && line.kind !== "contd-cue")) {
         // A locked page begins inside this block: split it there.
         const head: Block = { ...block, lines: block.lines.slice(0, at), moreAfter: block.kind === "dialogue" };
         const cue = block.lines[0] as BlockLine;
@@ -493,6 +496,17 @@ export function paginate(document: ScreenplayDocument, projectData: ProjectData,
     // Move the whole block to the next page. A block taller than a page is hard-split.
     if (row > 0) breakPage(block.type !== "scene-heading");
     if (lines.length > capacity) {
+      if (block.kind === "dialogue" && settings.continueds.dialogueMore !== false) {
+        // A speech longer than a whole page still breaks with (MORE) / NAME (CONT'D).
+        const split = dialogueSplit(lines, capacity) ?? capacity - 1;
+        lines.slice(0, split).forEach(place);
+        const cue = lines[0] as BlockLine;
+        place({ ...cue, runs: [{ text: texts.more }], kind: "more", type: "character", x: specs.character.left, align: "left" });
+        breakPage(true);
+        const contdText = settings.continueds.dialogueContinued !== false ? continuedCue(runsText(cue.runs), texts.contd) : runsText(cue.runs);
+        blocks.splice(b + 1, 0, { ...block, before: 0, lines: [{ ...cue, runs: [{ text: contdText }], kind: "contd-cue" }, ...lines.slice(split)] });
+        continue;
+      }
       lines.slice(0, capacity).forEach(place);
       breakPage(true);
       blocks.splice(b + 1, 0, { ...block, before: 0, lines: lines.slice(capacity) });
@@ -538,6 +552,30 @@ export function lockPages(layout: Layout): LockedPageStart[] {
     if (start) starts.push(start);
   }
   return starts;
+}
+
+/**
+ * Production → Re-lock Pages from Here. Pages before `fromPage` (1-based, physical) keep the
+ * boundaries and labels already issued, A-pages included. From `fromPage` on the script reflows
+ * freely and the pages are renumbered in sequence after the last kept page (after 12A comes 13),
+ * then everything is locked again.
+ */
+export function relockFromPage(document: ScreenplayDocument, projectData: ProjectData, options: PaginationOptions, fromPage: number): LockedPageStart[] {
+  const current = paginate(document, projectData, options);
+  const starts = lockPages(current);
+  // One entry per physical page (labels are unique within a layout).
+  const issued = current.pages.map((page) => starts.find((start) => start.label === page.label)).filter((start): start is LockedPageStart => !!start);
+  const from = Math.max(1, Math.min(fromPage, issued.length));
+  const kept = issued.slice(0, from - 1);
+  const previous = kept.at(-1)?.label;
+  const lastNumber = previous ? Number([...previous.matchAll(/\d+/gu)].at(-1)?.[0] ?? kept.length) : 0;
+  const start = issued[from - 1];
+  if (!start) return kept;
+  // Lock the kept pages plus the chosen page's first line; everything after flows as one locked run,
+  // so its natural page breaks show up as that run's A-pages. Renumber those in sequence.
+  const flowed = paginate(document, projectData, { ...options, lockedPages: [...kept, { ...start, label: String(lastNumber + 1) }] });
+  const restarted = lockPages(flowed).slice(from - 1).map((lock, offset) => ({ ...lock, label: String(lastNumber + 1 + offset) }));
+  return [...kept, ...restarted];
 }
 
 /** Appends (CONT'D) to a character cue unless it already carries one. */

@@ -208,6 +208,62 @@ describe("locked pages", () => {
     expect(new Set(labels).size).toBe(labels.length);
   });
 
+  it("locks a page that begins in the middle of a speech without looping", async () => {
+    const { lockPages } = await import("./pagination");
+    const filler = Array.from({ length: 40 }, (_, i) => createElement("action", `Line ${i}.`));
+    const document = { preamble: "", elements: [createElement("scene-heading", "INT. HALL - DAY"), ...filler, createElement("character", "ADA"), createElement("dialogue", longSpeech(30))] };
+    const data = letter();
+    const before = paginate(document, data);
+    const starts = lockPages(before);
+    expect(starts.some((start) => start.line > 0)).toBe(true); // page 2 starts mid-speech
+    const locked = paginate(document, data, { lockedPages: starts });
+    expect(locked.pages.map((page) => page.label)).toEqual(before.pages.map((page) => page.label));
+    expect(locked.pages.map((page) => lineTexts(page))).toEqual(before.pages.map((page) => lineTexts(page)));
+  });
+
+  it("re-locks from the selected page, keeping earlier pages (and their A-page) as issued", async () => {
+    const { lockPages, relockFromPage } = await import("./pagination");
+    const document = build(); const data = letter();
+    const lockedPages = lockPages(paginate(document, data));
+    const insertAfter = (elements: typeof document.elements, anchorId: string, count: number, tag: string) => {
+      const at = elements.findIndex((element) => element.id === anchorId);
+      return [...elements.slice(0, at + 1), ...Array.from({ length: count }, (_, i) => createElement("action", `${tag} added line ${i}.`)), ...elements.slice(at + 1)];
+    };
+    const original = paginate(document, data, { lockedPages });
+    // New material on page 3 (creates 3A) and on page 5 (creates 5A).
+    let elements = insertAfter(document.elements, original.pages[2].elementIds[1], 15, "Early");
+    elements = insertAfter(elements, original.pages[4].elementIds[1], 15, "Later");
+    const edited = { ...document, elements };
+    const before = paginate(edited, data, { lockedPages });
+    const labelsBefore = before.pages.map((page) => page.label);
+    const firstLine = (page: { lines: { elementId?: string; kind: string }[] }) => page.lines.find((line) => line.kind === "body")?.elementId;
+    expect(labelsBefore.slice(0, 6)).toEqual(["1", "2", "3", "3A", "4", "5"]);
+    expect(labelsBefore).toContain("5A");
+
+    const from = labelsBefore.indexOf("5") + 1; // cursor on page 5
+    const relocked = relockFromPage(edited, data, { lockedPages }, from);
+    const after = paginate(edited, data, { lockedPages: relocked });
+    const labelsAfter = after.pages.map((page) => page.label);
+    console.log(`Re-lock from page 5\n  before: ${labelsBefore.join(" ")}\n  after:  ${labelsAfter.join(" ")}`);
+    console.log(`  page starts before: ${before.pages.slice(0, 6).map((page) => `${page.label}@${firstLine(page)?.slice(0, 8)}`).join(" ")}`);
+    console.log(`  page starts after:  ${after.pages.slice(0, 6).map((page) => `${page.label}@${firstLine(page)?.slice(0, 8)}`).join(" ")}`);
+
+    // Everything before the selected page is exactly as issued: same labels, same first line, same content.
+    for (let i = 0; i < from - 1; i++) {
+      expect(after.pages[i].label).toBe(before.pages[i].label);
+      expect(firstLine(after.pages[i])).toBe(firstLine(before.pages[i]));
+      expect(after.pages[i].lines.length).toBe(before.pages[i].lines.length);
+    }
+    // From the selected page on: renumbered in sequence, no A-pages, starting where page 5 started.
+    expect(firstLine(after.pages[from - 1])).toBe(firstLine(before.pages[from - 1]));
+    const rest = labelsAfter.slice(from - 1);
+    expect(rest).toEqual(rest.map((_, i) => String(5 + i)));
+    // The earlier A-page survives (the old behaviour re-flowed the whole script and dropped it).
+    expect(labelsAfter).toContain("3A");
+    // Locking again with the result reproduces it.
+    expect(paginate(edited, data, { lockedPages: relocked }).pages.map((page) => page.label)).toEqual(labelsAfter);
+  });
+
   it("generates A, B … Z, AA suffixes", async () => {
     const { suffixLetters } = await import("./pagination");
     expect([1, 2, 26, 27].map(suffixLetters)).toEqual(["A", "B", "Z", "AA"]);
