@@ -182,3 +182,81 @@ mod tests {
     #[test]
     fn removes_windows_reserved_characters() { assert_eq!(safe_folder_name("My: Film?"), "My Film"); }
 }
+
+// ---------------------------------------------------------------------------
+// Automatic backups: timed copies in <project>/versions, named auto-YYYYMMDD-HHMMSS.
+// Only files with the "auto-" prefix are ever pruned, so hand-made copies are left alone.
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionEntry { pub name: String, pub modified_at: u64 }
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionPayload { pub content: String, pub project_data: Option<serde_json::Value> }
+
+fn version_name_ok(name: &str) -> bool {
+    name.starts_with("auto-") && name.len() < 40 && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+fn auto_versions(folder: &Path) -> AppResult<Vec<String>> {
+    let mut names: Vec<String> = fs::read_dir(folder)?.filter_map(|entry| entry.ok())
+        .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
+        .filter_map(|name| name.strip_suffix(".fountain").map(str::to_string))
+        .filter(|name| version_name_ok(name)).collect();
+    names.sort();
+    Ok(names)
+}
+
+pub fn write_version(root: &Path, content: &str, project_data: &serde_json::Value, keep: usize) -> AppResult<()> {
+    let folder = root.join("versions");
+    fs::create_dir_all(&folder)?;
+    let name = format!("auto-{}", chrono::Local::now().format("%Y%m%d-%H%M%S"));
+    atomic_write(&folder.join(format!("{name}.fountain")), content.as_bytes())?;
+    atomic_write(&folder.join(format!("{name}.data.json")), serde_json::to_string_pretty(project_data)?.as_bytes())?;
+    let names = auto_versions(&folder)?;
+    let excess = names.len().saturating_sub(keep.max(1));
+    for old in names.iter().take(excess) {
+        let _ = fs::remove_file(folder.join(format!("{old}.fountain")));
+        let _ = fs::remove_file(folder.join(format!("{old}.data.json")));
+    }
+    Ok(())
+}
+
+pub fn list_versions(root: &Path) -> AppResult<Vec<VersionEntry>> {
+    let folder = root.join("versions");
+    if !folder.is_dir() { return Ok(vec![]); }
+    let mut out = vec![];
+    for name in auto_versions(&folder)?.into_iter().rev() {
+        let modified_at = modified_millis(&folder.join(format!("{name}.fountain")))?;
+        out.push(VersionEntry { name, modified_at });
+    }
+    Ok(out)
+}
+
+pub fn read_version(root: &Path, name: &str) -> AppResult<VersionPayload> {
+    if !version_name_ok(name) { return Err(AppError::Validation("That backup name isn't valid.".into())); }
+    let folder = root.join("versions");
+    let content = fs::read_to_string(folder.join(format!("{name}.fountain")))?;
+    let project_data = fs::read_to_string(folder.join(format!("{name}.data.json"))).ok().and_then(|text| serde_json::from_str(&text).ok());
+    Ok(VersionPayload { content, project_data })
+}
+
+#[cfg(test)]
+mod version_tests {
+    use super::*;
+    #[test]
+    fn keeps_only_the_newest_auto_backups_and_leaves_other_files() {
+        let root = std::env::temp_dir().join(format!("olukotan-versions-{}", Uuid::new_v4()));
+        let folder = root.join("versions"); fs::create_dir_all(&folder).unwrap();
+        fs::write(folder.join("my-own-copy.fountain"), "mine").unwrap();
+        for i in 0..5 { fs::write(folder.join(format!("auto-20260101-00000{i}.fountain")), format!("v{i}")).unwrap(); }
+        write_version(&root, "latest", &serde_json::json!({"a": 1}), 3).unwrap();
+        let list = list_versions(&root).unwrap();
+        assert_eq!(list.len(), 3);
+        assert_eq!(read_version(&root, &list[0].name).unwrap().content, "latest");
+        assert!(folder.join("my-own-copy.fountain").exists());
+        assert!(read_version(&root, "../olukotan-project").is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+}

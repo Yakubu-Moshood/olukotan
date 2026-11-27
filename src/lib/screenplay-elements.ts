@@ -1,3 +1,5 @@
+import { splitFormatted, visibleText } from "./rich-text";
+
 export type ScreenplayElementType =
   | "scene-heading" | "action" | "character" | "parenthetical" | "dialogue"
   | "transition" | "shot" | "general" | "section" | "synopsis" | "note" | "page-break";
@@ -13,8 +15,19 @@ export interface ScreenplayElement {
     characterExtension?: string;
     characterExtensions?: string[];
     revisionSet?: string;
+    /**
+     * Revision marks on parts of the paragraph, as [start, end, revisionSetId] ranges of visible
+     * characters (Final Draft marks individual text runs). Characters outside every range are unmarked.
+     */
+    revisionRuns?: [number, number, string][];
     omitted?: boolean;
     dualDialogueGroupId?: string;
+    /** Paragraph-level overrides from Format → Alignment / Spacing / Space Before. */
+    format?: { align?: "left" | "center" | "right"; spacing?: 1 | 1.5 | 2; spaceBefore?: number };
+    /** Bookmark id pointing at this element. */
+    bookmark?: string;
+    /** Keep this element's id across save/reopen (page-lock starts, bookmarks). */
+    anchor?: boolean;
   };
 }
 
@@ -58,6 +71,10 @@ const SCENE_PATTERN = /^(?:INT\.|EXT\.|INT\.\/EXT\.|EXT\.\/INT\.|I\/E\.|I\/E\.|E
 const CHARACTER_EXTENSION_PATTERN = /\(([^)]*)\)/gu;
 const STRUCTURAL_MARKER = /^\/\*\s*OLUKOTAN:([a-z-]+)\s*\*\/$/i;
 const SCENE_ID_MARKER = /^\/\*\s*OLUKOTAN:SCENE-ID:([^*]+)\*\/$/i;
+const REVISION_MARKER = /^\/\*\s*OLUKOTAN:REV:([^*]+)\*\/$/i;
+const REVISION_RUNS_MARKER = /^\/\*\s*OLUKOTAN:REVRUNS:(\[.*\])\s*\*\/$/i;
+const FORMAT_MARKER = /^\/\*\s*OLUKOTAN:FMT:(\{[^*]*\})\s*\*\/$/i;
+const ANCHOR_MARKER = /^\/\*\s*OLUKOTAN:ID:([\w-]+)(?::BM:([\w-]+))?\s*\*\/$/i;
 
 function id() {
   return globalThis.crypto?.randomUUID?.() ?? `element-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -98,8 +115,9 @@ export function characterCueText(name: string, extensions: string[]) {
   return [name.trim().toLocaleUpperCase("en-GB"), ...extensions.map((extension) => `(${extension.trim().toLocaleUpperCase("en-GB")})`)].filter(Boolean).join(" ");
 }
 
-export function isSceneHeading(text: string) { return SCENE_PATTERN.test(text.trim()); }
-export function isTransition(text: string) { return COMMON_TRANSITIONS.includes(text.trim().toLocaleUpperCase("en-GB")); }
+// Bold/italic/underline markers never change what an element is.
+export function isSceneHeading(text: string) { return SCENE_PATTERN.test(visibleText(text).trim()); }
+export function isTransition(text: string) { return COMMON_TRANSITIONS.includes(visibleText(text).trim().toLocaleUpperCase("en-GB")); }
 export function isShot(text: string) {
   const upper = text.trim().toLocaleUpperCase("en-GB");
   return COMMON_SHOTS.some((shot) => upper === shot || upper.startsWith(`${shot} `));
@@ -163,7 +181,7 @@ export function updateElementText(elements: ScreenplayElement[], index: number, 
   // Typing edits text only. Action-to-Character (or any other structural
   // transition) belongs to an explicit commit event such as Enter, Tab,
   // autocomplete acceptance, a shortcut, or the element selector.
-  if (type === "action" && COMMITTED_SCENE_PREFIX.test(rawText.trimStart())) type = "scene-heading";
+  if (type === "action" && COMMITTED_SCENE_PREFIX.test(visibleText(rawText).trimStart())) type = "scene-heading";
   else if (type === "dialogue" && rawText.trimStart().startsWith("(")) type = "parenthetical";
   const text = normalizeElementText(type, rawText);
   const metadata = type === "character" ? (() => { const value = parseCharacter(text); return { ...current.metadata, characterName: value.name, characterExtension: value.extension, characterExtensions: value.extensions }; })() : current.metadata;
@@ -183,8 +201,8 @@ export function applyEnter(elements: ScreenplayElement[], index: number, cursorP
     const next = [...elements]; next.splice(index, 1, character, dialogue);
     return { elements: next, activeIndex: index + 1, cursorPosition: 0 };
   }
-  const before = current.text.slice(0, cursorPosition);
-  const after = current.text.slice(cursorPosition);
+  // cursorPosition is a visible-text offset; split without breaking emphasis markers.
+  const [before, after] = splitFormatted(current.text, cursorPosition);
   const semanticallyEmpty = current.type === "parenthetical" ? !current.text.replace(/[()]/g, "").trim() : !current.text.trim();
   const nextType = getNextElementType({ currentType: current.type, currentText: current.text,
     previousType: elements[index - 1]?.type, previousText: elements[index - 1]?.text,
@@ -228,52 +246,102 @@ function elementFromLine(type: ScreenplayElementType, text: string): ScreenplayE
 export function parseFountain(source: string): ScreenplayDocument {
   const lines = source.replace(/\r\n/g, "\n").split("\n");
   const preamble: string[] = [];
-  while (lines.length && (/^[A-Za-z][A-Za-z ]+:/u.test(lines[0]) || (!lines[0].trim() && preamble.length))) {
-    preamble.push(lines.shift()!);
-    if (preamble.length && !lines[0]?.trim() && preamble.at(-1) === "") { lines.shift(); break; }
+  // Fountain title page: key/value lines (with indented continuations) up to the first blank line.
+  if (lines.length && /^[A-Za-z][A-Za-z ]*:/u.test(lines[0]) && !isTransition(lines[0].trim())) {
+    while (lines.length && lines[0].trim()) preamble.push(lines.shift()!);
+    while (lines.length && !lines[0].trim()) lines.shift();
   }
   const elements: ScreenplayElement[] = [];
   let marker: ScreenplayElementType | undefined;
   let pendingSceneId: string | undefined;
   let expectingDialogue = false;
+  let pendingRevision: string | undefined;
+  let pendingRevisionRuns: [number, number, string][] | undefined;
+  let pendingFormat: NonNullable<ScreenplayElement["metadata"]>["format"] | undefined;
+  let pendingAnchor: { id: string; bookmark?: string } | undefined;
+  let dualGroup: string | undefined;
+  const push = (element: ScreenplayElement) => {
+    if (pendingRevision) { element.metadata = { ...element.metadata, revisionSet: pendingRevision }; pendingRevision = undefined; }
+    if (pendingRevisionRuns) { element.metadata = { ...element.metadata, revisionRuns: pendingRevisionRuns }; pendingRevisionRuns = undefined; }
+    if (pendingFormat) { element.metadata = { ...element.metadata, format: pendingFormat }; pendingFormat = undefined; }
+    if (pendingAnchor) { element.id = pendingAnchor.id; element.metadata = { ...element.metadata, anchor: true, ...(pendingAnchor.bookmark ? { bookmark: pendingAnchor.bookmark } : {}) }; pendingAnchor = undefined; }
+    if (dualGroup && ["character", "parenthetical", "dialogue"].includes(element.type)) element.metadata = { ...element.metadata, dualDialogueGroupId: dualGroup };
+    elements.push(element);
+  };
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i]; const line = raw.trim();
-    if (!line) { expectingDialogue = false; continue; }
+    if (!line) { expectingDialogue = false; dualGroup = undefined; continue; }
+    const runsMarker = line.match(REVISION_RUNS_MARKER);
+    if (runsMarker) {
+      try {
+        const parsed = JSON.parse(runsMarker[1]) as unknown;
+        if (Array.isArray(parsed)) pendingRevisionRuns = parsed.filter((run): run is [number, number, string] => Array.isArray(run) && typeof run[0] === "number" && typeof run[1] === "number" && typeof run[2] === "string");
+      } catch { /* ignore a damaged marker */ }
+      continue;
+    }
+    const revisionMarker = line.match(REVISION_MARKER);
+    if (revisionMarker) { pendingRevision = revisionMarker[1].trim(); continue; }
+    const anchorMarker = line.match(ANCHOR_MARKER);
+    if (anchorMarker) { pendingAnchor = { id: anchorMarker[1], bookmark: anchorMarker[2] }; continue; }
+    const formatMarker = line.match(FORMAT_MARKER);
+    if (formatMarker) { try { pendingFormat = JSON.parse(formatMarker[1]); } catch { /* ignore a damaged marker */ } continue; }
     const sceneIdMarker = line.match(SCENE_ID_MARKER);
     if (sceneIdMarker) { pendingSceneId = sceneIdMarker[1].trim(); continue; }
     const marked = line.match(STRUCTURAL_MARKER);
     if (marked) { marker = marked[1] as ScreenplayElementType; continue; }
-    if (marker) { elements.push(elementFromLine(marker, line.replace(/^!/u, ""))); marker = undefined; expectingDialogue = false; continue; }
-    if (line === "===") { elements.push(createElement("page-break")); expectingDialogue = false; continue; }
-    if (line.startsWith("[[") && line.endsWith("]]")) { elements.push(createElement("note", line.slice(2, -2))); continue; }
-    if (line.startsWith("#")) { elements.push(createElement("section", line.replace(/^#+\s*/u, ""))); continue; }
-    if (line.startsWith("=")) { elements.push(createElement("synopsis", line.replace(/^=\s*/u, ""))); continue; }
-    if (line.startsWith("!")) { elements.push(createElement("action", line.slice(1))); expectingDialogue = false; continue; }
+    if (marker) { push(elementFromLine(marker, line.replace(/^!/u, ""))); marker = undefined; expectingDialogue = false; continue; }
+    if (line === "===") { push(createElement("page-break")); expectingDialogue = false; continue; }
+    if (line.startsWith("[[") && line.endsWith("]]")) { push(createElement("note", line.slice(2, -2))); continue; }
+    if (line.startsWith("#")) { push(createElement("section", line.replace(/^#+\s*/u, ""))); continue; }
+    if (line.startsWith("=")) { push(createElement("synopsis", line.replace(/^=\s*/u, ""))); continue; }
+    if (line.startsWith("!")) { push(createElement("action", line.slice(1))); expectingDialogue = false; continue; }
     if (isSceneHeading(line.replace(/^\./u, ""))) {
       const scene = elementFromLine("scene-heading", line.replace(/^\./u, ""));
       scene.metadata = { ...scene.metadata, sceneId: pendingSceneId }; pendingSceneId = undefined;
-      elements.push(scene); expectingDialogue = false; continue;
+      push(scene); expectingDialogue = false; continue;
     }
-    if (line.startsWith(">") || isTransition(line)) { elements.push(createElement("transition", line.replace(/^>\s*/u, ""))); expectingDialogue = false; continue; }
+    if (line.startsWith(">") || isTransition(line)) { push(createElement("transition", line.replace(/^>\s*/u, ""))); expectingDialogue = false; continue; }
     if (expectingDialogue) {
-      if (/^\(.*\)$/u.test(line)) elements.push(createElement("parenthetical", line));
-      else elements.push(createElement("dialogue", line));
+      if (/^\(.*\)$/u.test(line)) push(createElement("parenthetical", line));
+      else push(createElement("dialogue", line));
       continue;
     }
     const next = lines[i + 1]?.trim();
-    if (isLikelyCharacter(line, [], false) && next && !isSceneHeading(line) && !isTransition(line)) {
-      elements.push(elementFromLine("character", line.replace(/^@/u, ""))); expectingDialogue = true; continue;
+    const dualCue = /\s*\^$/u.test(line);
+    const cueLine = line.replace(/\s*\^$/u, "");
+    if ((isLikelyCharacter(cueLine, [], false) || line.startsWith("@")) && next && !isSceneHeading(cueLine) && !isTransition(cueLine)) {
+      if (dualCue) {
+        // Fountain dual dialogue: "^" on the second cue pairs it with the previous speech.
+        let start = elements.length - 1;
+        while (start >= 0 && ["parenthetical", "dialogue"].includes(elements[start].type)) start--;
+        const group = (start >= 0 && elements[start].type === "character" && elements[start].metadata?.dualDialogueGroupId) || `dual-${id()}`;
+        for (let k = Math.max(start, 0); k < elements.length; k++) if (["character", "parenthetical", "dialogue"].includes(elements[k].type)) elements[k].metadata = { ...elements[k].metadata, dualDialogueGroupId: group };
+        dualGroup = group;
+      }
+      push(elementFromLine("character", cueLine.replace(/^@/u, ""))); expectingDialogue = true; continue;
     }
-    elements.push(createElement("action", line));
+    push(createElement("action", line));
   }
-  if (!elements.length) elements.push(createElement("scene-heading"));
+  if (!elements.length) push(createElement("scene-heading"));
   return { preamble: preamble.join("\n").trimEnd(), elements };
 }
 
-function fountainText(element: ScreenplayElement): string {
+function fountainText(element: ScreenplayElement, dualSecond = false): string {
+  const revision = (element.metadata?.revisionSet ? `/* OLUKOTAN:REV:${element.metadata.revisionSet} */\n` : "")
+    + (element.metadata?.revisionRuns?.length ? `/* OLUKOTAN:REVRUNS:${JSON.stringify(element.metadata.revisionRuns).replace(/\*\//gu, "* /")} */\n` : "");
+  const format = element.metadata?.format && Object.keys(element.metadata.format).length ? `/* OLUKOTAN:FMT:${JSON.stringify(element.metadata.format)} */\n` : "";
+  const anchor = element.metadata?.anchor || element.metadata?.bookmark ? `/* OLUKOTAN:ID:${element.id}${element.metadata.bookmark ? `:BM:${element.metadata.bookmark}` : ""} */\n` : "";
+  return anchor + revision + format + fountainBody(element, dualSecond);
+}
+
+function fountainBody(element: ScreenplayElement, dualSecond: boolean): string {
   switch (element.type) {
     case "scene-heading": return `${element.metadata?.sceneId ? `/* OLUKOTAN:SCENE-ID:${element.metadata.sceneId} */\n` : ""}${normalizeElementText(element.type, element.text)}${element.metadata?.sceneNumber ? ` #${element.metadata.sceneNumber}#` : ""}`;
-    case "character": return normalizeElementText(element.type, element.text);
+    case "character": {
+      // Cues Fountain wouldn't recognise on its own (e.g. "EMPLOYEE 1") are forced with "@" so they stay characters.
+      const cue = normalizeElementText(element.type, element.text);
+      return `${isLikelyCharacter(cue) ? "" : "@"}${cue}${dualSecond ? " ^" : ""}`;
+    }
     case "parenthetical": return normalizeElementText(element.type, element.text);
     case "transition": return `>${normalizeElementText(element.type, element.text)}`;
     case "action": return (isSceneHeading(element.text) || isTransition(element.text) || isLikelyCharacter(element.text)) ? `!${element.text}` : element.text;
@@ -291,7 +359,9 @@ export function serializeFountain(document: ScreenplayDocument): string {
   const body = document.elements.filter((element) => element.text || element.type === "page-break").map((element, index, all) => {
     const previous = all[index - 1];
     const closeDialogue = ["parenthetical", "dialogue"].includes(element.type) && previous && ["character", "parenthetical", "dialogue"].includes(previous.type);
-    return `${index && !closeDialogue ? "\n" : ""}${fountainText(element)}`;
+    const group = element.type === "character" ? element.metadata?.dualDialogueGroupId : undefined;
+    const dualSecond = !!group && all.slice(0, index).some((other) => other.type === "character" && other.metadata?.dualDialogueGroupId === group);
+    return `${index && !closeDialogue ? "\n" : ""}${fountainText(element, dualSecond)}`;
   }).join("\n");
   return `${document.preamble ? `${document.preamble}\n\n` : ""}${body}${body ? "\n" : ""}`;
 }

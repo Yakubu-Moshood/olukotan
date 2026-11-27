@@ -192,3 +192,29 @@ describe("structured Fountain round trip", () => {
     expect(parseFountain(fountain).elements[0]).toMatchObject({ type: "action", text: "NO ENTRY" });
   });
 });
+
+describe("formatted scene headings", () => {
+  it("recognises bold/underlined headings when typing and after reopening", () => {
+    const typed = updateElementText([createElement("action", "")], 0, "**_INT. OZIEGBE'S FAMILY HOUSE - DAY_**");
+    expect(typed.elements[0].type).toBe("scene-heading");
+    const reopened = parseFountain(serializeFountain({ preamble: "", elements: typed.elements }));
+    expect(reopened.elements[0].type).toBe("scene-heading");
+  });
+});
+
+describe("character cues with numbers", () => {
+  it("keeps EMPLOYEE 1 and mixed-case cues as characters through a save and reload", () => {
+    const doc = { preamble: "", elements: [
+      { id: "a", type: "action" as const, text: "Staff gather." },
+      { id: "b", type: "character" as const, text: "EMPLOYEE 1" },
+      { id: "c", type: "dialogue" as const, text: "Where is the CSO?" },
+      { id: "d", type: "character" as const, text: "SecuritY GUARD 2" },
+      { id: "e", type: "parenthetical" as const, text: "(quietly)" },
+      { id: "f", type: "dialogue" as const, text: "Go home." },
+    ] };
+    const back = parseFountain(serializeFountain(doc)).elements;
+    expect(back.map((e) => e.type)).toEqual(["action", "character", "dialogue", "character", "parenthetical", "dialogue"]);
+    expect(back[1].text).toBe("EMPLOYEE 1");
+    expect(back[3].text).toBe("SECURITY GUARD 2");
+  });
+});

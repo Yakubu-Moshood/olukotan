@@ -2,10 +2,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CreateProjectDialog } from "./components/CreateProjectDialog";
 import { Editor } from "./components/Editor";
 import { Home } from "./components/Home";
+import { ImportDialog } from "./components/ImportDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { googleDrive } from "./google-drive";
-import { platform } from "./platform";
+import { appVersion, openExternal, platform } from "./platform";
+import { checkForUpdate, type UpdateInfo } from "./lib/updates";
 import { migrateProjectData, type AppSettings, type ProjectData, type ProjectPayload, type RecentProject } from "./types";
+import type { Stationery } from "./lib/stationery";
+import { synchroniseSceneMetadata } from "./lib/screenplay-production";
+import { parseFountain, serializeFountain } from "./lib/screenplay-elements";
 
 const defaultSettings: AppSettings = { defaultProjectFolder: "", defaultAuthor: "", theme: "system", autosaveSeconds: 5, googleClientId: "", driveSyncEnabled: false };
 function errorText(reason: unknown) { return reason instanceof Error ? reason.message : String(reason); }
@@ -14,6 +19,10 @@ export default function App() {
   const [recents, setRecents] = useState<RecentProject[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [template, setTemplate] = useState<Stationery | null>(null);
+  const [joinCode, setJoinCode] = useState<string | undefined>(undefined);
+  const [editorKey, setEditorKey] = useState(0);
   const [settings, setSettings] = useState(defaultSettings);
   const [project, setProject] = useState<ProjectPayload | null>(null);
   const [content, setContent] = useState("");
@@ -24,12 +33,14 @@ export default function App() {
   const [driveBusy, setDriveBusy] = useState(false);
   const [driveMessage, setDriveMessage] = useState("");
   const contentRef = useRef(content); contentRef.current = content;
+  const dirtySinceRef = useRef(0);
   const projectDataRef = useRef<ProjectData>(migrateProjectData());
 
   const refresh = useCallback(async () => { try { setRecents(await platform.recents()); } catch { setRecents([]); } }, []);
   useEffect(() => { void refresh(); void platform.settings().then((value) => setSettings({ ...defaultSettings, ...value })).catch(() => undefined); }, [refresh]);
 
-  const enterProject = (value: ProjectPayload) => {
+  const enterProject = (value: ProjectPayload, join?: string) => {
+    setJoinCode(join); setEditorKey((key) => key + 1);
     setDirty(false); setMessage("");
     if (value.recovery && window.confirm("Olukotan found newer unsaved work. Restore it now?")) {
       value.screenplay = value.recovery.content; setDirty(true); setMessage("Recovered unsaved work — save to keep it");
@@ -68,6 +79,12 @@ export default function App() {
   };
   const openRecent = async (path: string) => { try { enterProject(await platform.openProject(path)); } catch (reason) { window.alert(errorText(reason)); } };
 
+  // Desktop: look for a newer installer once at start-up and offer it quietly.
+  const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  useEffect(() => {
+    void appVersion().then((version) => version ? checkForUpdate(version) : null).then(setUpdate).catch(() => undefined);
+  }, []);
+
   const save = useCallback(async () => {
     if (!project || !dirty || project.readOnly) return;
     setSaving(true); setMessage("");
@@ -89,26 +106,84 @@ export default function App() {
   useEffect(() => {
     if (!project || !dirty || project.readOnly) return;
     const recoveryTimer = window.setTimeout(() => { void platform.recover(project.projectPath, contentRef.current).then(() => setMessage("Recovery copy updated")); }, 1500);
-    const saveTimer = window.setTimeout(() => { void save(); }, settings.autosaveSeconds * 1000);
+    // Save after a pause in typing, but never leave changes unsaved for more than 60 seconds.
+    if (!dirtySinceRef.current) dirtySinceRef.current = Date.now();
+    const deadline = Math.max(0, 60_000 - (Date.now() - dirtySinceRef.current));
+    const saveTimer = window.setTimeout(() => { void save(); }, Math.min(settings.autosaveSeconds * 1000, deadline));
     return () => { clearTimeout(recoveryTimer); clearTimeout(saveTimer); };
   }, [content, dirty, project, save, settings.autosaveSeconds]);
+  useEffect(() => { if (!dirty) dirtySinceRef.current = 0; }, [dirty]);
+
+  // Automatic backups: a timed copy in the project's versions folder whenever the script has changed.
+  const projectPath = project?.projectPath; const readOnly = project?.readOnly;
+  useEffect(() => {
+    if (!projectPath || readOnly || !platform.writeVersion) return;
+    let last = contentRef.current;
+    const minutes = Math.max(1, settings.backupMinutes ?? 15);
+    const timer = window.setInterval(() => {
+      if (contentRef.current === last) return;
+      last = contentRef.current;
+      void platform.writeVersion?.(projectPath, last, projectDataRef.current, Math.max(1, settings.backupsToKeep ?? 20)).catch(() => setMessage("Automatic backup couldn't be written"));
+    }, minutes * 60_000);
+    return () => clearInterval(timer);
+  }, [projectPath, readOnly, settings.backupMinutes, settings.backupsToKeep]);
 
   useEffect(() => {
-    const handler = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") { event.preventDefault(); void save(); } };
+    // The editor's File menu also handles Ctrl+S; only act when nothing else has.
+    const handler = (event: KeyboardEvent) => { if (event.defaultPrevented) return; if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") { event.preventDefault(); void save(); } };
     window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler);
   }, [save]);
 
-  if (project) return <Editor project={project} content={content} dirty={dirty} saving={saving} message={message}
+  const pickFolder = async (title: string) => platform.kind === "web" ? "This device" : (settings.defaultProjectFolder || await platform.chooseFolder(title));
+  /** Creates a project from given content (template, Save As copy, shared session) and opens it. */
+  const createWith = async (title: string, folder: string, screenplay: string, data: ProjectData, join?: string) => {
+    const created = await platform.createProject({ parentPath: folder, title, projectType: project?.manifest.projectType ?? "feature-film", author: settings.defaultAuthor || project?.manifest.author || "" });
+    const modifiedAt = await platform.save(created.projectPath, screenplay, created.modifiedAt, data);
+    await refresh();
+    enterProject({ ...created, screenplay, projectData: data, modifiedAt }, join);
+  };
+  const applyTemplate = async (value: ProjectPayload) => {
+    if (!template) return enterProject(value);
+    const data = migrateProjectData(value.projectData);
+    if (template.elementStyles) data.elementStyles = template.elementStyles;
+    if (template.sceneHeadingSpacing) data.screenplaySettings.pagination.sceneHeadingSpacing = template.sceneHeadingSpacing;
+    const prepared = synchroniseSceneMetadata(parseFountain(`Title: ${value.manifest.title}\nAuthor: ${value.manifest.author}\n\n${template.fountain}`), data);
+    const screenplay = serializeFountain(prepared.document);
+    const modifiedAt = await platform.save(value.projectPath, screenplay, value.modifiedAt, prepared.projectData);
+    setTemplate(null);
+    enterProject({ ...value, screenplay, projectData: prepared.projectData, modifiedAt });
+  };
+
+  const updateToast = update && <div className="update-toast" role="status">
+    <span>Olukotan {update.version} is available.</span>
+    <button className="primary" onClick={() => { void openExternal(update.downloadUrl); setUpdate(null); }}>Download</button>
+    <button className="secondary" onClick={() => setUpdate(null)}>Later</button>
+  </div>;
+
+  if (project) return <><Editor key={editorKey} project={project} joinCode={joinCode} settings={settings} recents={recents}
+    onSettingsChange={async (value) => { await platform.saveSettings(value); setSettings(value); }}
+    onNew={() => { setProject(null); setCreateOpen(true); }}
+    onNewFromTemplate={(value) => { setTemplate(value); setProject(null); setCreateOpen(true); }}
+    onOpen={() => { setProject(null); void openFolder(); }}
+    onOpenRecent={(path) => void openRecent(path)}
+    onSaveAs={async (title, folder, screenplay, data) => { await createWith(title, folder, screenplay, data); }}
+    onRevert={() => { void platform.discardRecovery(project.projectPath); void platform.openProject(project.projectPath).then((value) => { value.recovery = undefined; enterProject(value); }); }}
+    onExit={() => { setProject(null); void refresh(); }}
+    onJoinSession={async (code) => {
+      try { const folder = await pickFolder("Where should the shared script be kept?"); if (!folder) return; await createWith(`Shared script ${code}`, folder, "", migrateProjectData(), code); }
+      catch (reason) { window.alert(errorText(reason)); }
+    }} content={content} dirty={dirty} saving={saving} message={message}
     onChange={(value) => { setContent(value); setDirty(true); setMessage(""); }} onSave={() => void save()}
     onProjectDataChange={(value) => { projectDataRef.current = value; setProject((current) => current ? { ...current, projectData: value } : current); setDirty(true); setMessage(""); }}
     onExported={(entry) => { setProject((current) => current ? { ...current, manifest: { ...current.manifest, exportHistory: [...current.manifest.exportHistory, entry] } } : current); void platform.recordExport(project.projectPath, entry); setMessage(`Exported ${entry.format.toUpperCase()}`); }}
     onHome={() => { if (!dirty || window.confirm("Leave the editor? Your recovery copy will remain available.")) { setProject(null); void refresh(); } }}
-    onReveal={() => void platform.reveal(project.projectPath)} />;
+    onReveal={() => void platform.reveal(project.projectPath)} />{updateToast}</>;
 
   const webMode = platform.kind === "web";
-  return <><Home recents={recents} onCreate={() => setCreateOpen(true)} onOpen={() => void openFolder()} onOpenRecent={(path) => void openRecent(path)}
+  return <><Home recents={recents} onCreate={() => setCreateOpen(true)} onImport={() => setImportOpen(true)} onOpen={() => void openFolder()} onOpenRecent={(path) => void openRecent(path)}
     onRemove={(id) => void platform.removeRecent(id).then(refresh)} onPin={(item) => void platform.pinRecent(item.projectId, !item.pinned).then(refresh)} onReveal={(path) => void platform.reveal(path)} onSettings={() => setSettingsOpen(true)} webMode={webMode}
     drive={{ configured: settings.driveSyncEnabled && Boolean(settings.googleClientId), connected: driveConnected, busy: driveBusy, message: driveMessage, onConnect: () => void syncDrive(), onSync: () => void syncDrive() }} />
-    {createOpen && <CreateProjectDialog onClose={() => setCreateOpen(false)} onCreated={enterProject} defaultAuthor={settings.defaultAuthor} defaultFolder={settings.defaultProjectFolder || (webMode ? "This device" : "")} webMode={webMode}/>} 
-    {settingsOpen && <SettingsDialog initial={settings} onClose={() => setSettingsOpen(false)} webMode={webMode} onSave={async (value) => { await platform.saveSettings(value); setSettings(value); setSettingsOpen(false); }}/>}</>;
+    {createOpen && <CreateProjectDialog onClose={() => { setCreateOpen(false); setTemplate(null); }} onCreated={(value) => void applyTemplate(value)} defaultAuthor={settings.defaultAuthor} defaultFolder={settings.defaultProjectFolder || (webMode ? "This device" : "")} webMode={webMode}/>} 
+    {importOpen && <ImportDialog onClose={() => setImportOpen(false)} defaultAuthor={settings.defaultAuthor} defaultFolder={settings.defaultProjectFolder || (webMode ? "This device" : "")} onImported={(value) => { setImportOpen(false); enterProject(value); void refresh(); }}/>}
+    {settingsOpen && <SettingsDialog initial={settings} onClose={() => setSettingsOpen(false)} webMode={webMode} onSave={async (value) => { await platform.saveSettings(value); setSettings(value); setSettingsOpen(false); }}/>}{updateToast}</>;
 }

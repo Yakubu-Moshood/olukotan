@@ -19,6 +19,10 @@ export interface OlukotanPlatform {
   reveal(path: string): Promise<void>;
   importProject(payload: ProjectPayload): Promise<void>;
   recordExport(path: string, entry: { format: ExportFormat; path: string; exportedAt: string }): Promise<void>;
+  /** Automatic timed backups (desktop only): kept in the project's versions folder. */
+  writeVersion?(path: string, content: string, projectData: ProjectData, keep: number): Promise<void>;
+  listVersions?(path: string): Promise<{ name: string; modifiedAt: number }[]>;
+  readVersion?(path: string, name: string): Promise<{ content: string; projectData?: ProjectData }>;
 }
 
 const defaults: AppSettings = { defaultProjectFolder: "This device", defaultAuthor: "", theme: "system", autosaveSeconds: 5, googleClientId: "", driveSyncEnabled: false };
@@ -51,7 +55,58 @@ const desktopPlatform: OlukotanPlatform = {
   async reveal(projectPath) { const { invoke } = await import("@tauri-apps/api/core"); return invoke("reveal_in_explorer", { projectPath }); },
   async importProject() { throw new Error("Drive import is available in the web companion."); },
   async recordExport(projectPath, entry) { const { invoke } = await import("@tauri-apps/api/core"); return invoke("record_export", { projectPath, entry }); },
+  async writeVersion(projectPath, content, projectData, keep) { const { invoke } = await import("@tauri-apps/api/core"); return invoke("write_version", { projectPath, content, projectData, keep }); },
+  async listVersions(projectPath) { const { invoke } = await import("@tauri-apps/api/core"); return invoke("list_versions", { projectPath }); },
+  async readVersion(projectPath, name) { const { invoke } = await import("@tauri-apps/api/core"); return invoke("read_version", { projectPath, name }); },
 };
 
 export const platform = isTauri ? desktopPlatform : webPlatform;
 export const desktop = platform;
+
+/** Saves a generated file. Desktop: native Save dialog (any folder, including Google Drive). Web: browser download. Returns where it went, or null if cancelled. */
+export async function saveFileAs(fileName: string, data: Uint8Array | string, filterName: string, extensions: string[]): Promise<string | null> {
+  const bytes = typeof data === "string" ? new TextEncoder().encode(data) : data;
+  if (isTauri) {
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    const path = await save({ defaultPath: fileName, filters: [{ name: filterName, extensions }] });
+    if (!path) return null;
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("write_export_file", { path, data: Array.from(bytes) });
+    return path;
+  }
+  const blob = new Blob([bytes as BlobPart]);
+  const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = fileName; link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 2000);
+  return `Downloads/${fileName}`;
+}
+
+export async function openExternal(url: string): Promise<void> {
+  if (isTauri) { const { invoke } = await import("@tauri-apps/api/core"); await invoke("open_external", { url }); return; }
+  window.open(url, "_blank", "noopener");
+}
+
+/** Closes the app window (desktop). Returns false on the web, where the caller should go home instead. */
+export async function closeAppWindow(): Promise<boolean> {
+  if (!isTauri) return false;
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  await getCurrentWindow().close(); return true;
+}
+
+export async function toggleFullscreen(): Promise<void> {
+  if (isTauri) { const { getCurrentWindow } = await import("@tauri-apps/api/window"); const win = getCurrentWindow(); await win.setFullscreen(!(await win.isFullscreen())); return; }
+  if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen();
+}
+
+/** Sets the window's title bar text (desktop) and the document title (web). */
+export async function setWindowTitle(title: string): Promise<void> {
+  document.title = title;
+  if (!isTauri) return;
+  try { const { getCurrentWindow } = await import("@tauri-apps/api/window"); await getCurrentWindow().setTitle(title); } catch { /* title is cosmetic */ }
+}
+
+/** The installed app's version (desktop), or null on the web where the newest version always loads. */
+export async function appVersion(): Promise<string | null> {
+  if (!isTauri) return null;
+  const { getVersion } = await import("@tauri-apps/api/app");
+  return getVersion();
+}

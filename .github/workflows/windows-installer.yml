@@ -1,0 +1,85 @@
+name: Windows installer
+
+# Builds a Windows installer on every push.
+# - Feature branches (and manual runs on them): installer uploaded as an Actions artifact for testing only.
+# - main only: installer also published as a GitHub release. Installed copies of Olukotan read the
+#   latest release as their update feed, so nothing but main may publish there.
+on:
+  push:
+    branches: [main, feature/final-draft-parity]
+    paths-ignore: ["**.md", "docs/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-installer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Set version from build number
+        id: version
+        shell: pwsh
+        run: |
+          $version = "0.1.$env:GITHUB_RUN_NUMBER"
+          node -e "const fs=require('fs');for(const f of ['package.json','src-tauri/tauri.conf.json']){const j=JSON.parse(fs.readFileSync(f,'utf8'));j.version='$version';fs.writeFileSync(f,JSON.stringify(j,null,2)+'\n');}"
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Test
+        run: npx vitest run
+
+      - name: Build installer
+        run: npx tauri build --bundles nsis
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Olukotan-${{ steps.version.outputs.version }}-${{ github.ref_name == 'main' && 'release' || 'test' }}-windows-installer
+          path: src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+          retention-days: 30
+
+  # Only main publishes to the update feed. Applies to push and workflow_dispatch alike.
+  release:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Olukotan-${{ needs.build.outputs.version }}-release-windows-installer
+          path: installer
+
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = "${{ needs.build.outputs.version }}"
+          $installer = Get-ChildItem "installer/*-setup.exe" | Select-Object -First 1
+          $notes = "Olukotan $version, built from ${{ github.ref_name }} ($($env:GITHUB_SHA.Substring(0,7))). Download the setup file below and run it to install or update. Your scripts are kept."
+          gh release create "v$version" $installer.FullName --repo "${{ github.repository }}" --title "Olukotan $version" --notes $notes --target $env:GITHUB_SHA --latest

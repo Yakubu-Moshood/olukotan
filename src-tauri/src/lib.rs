@@ -45,6 +45,15 @@ fn discard_recovery(project_path: String) -> AppResult<()> { storage::discard_re
 fn record_export(project_path: String, entry: serde_json::Value) -> AppResult<()> { storage::record_export(&storage::path(project_path), entry) }
 
 #[tauri::command]
+fn write_version(project_path: String, content: String, project_data: serde_json::Value, keep: usize) -> AppResult<()> { storage::write_version(&storage::path(project_path), &content, &project_data, keep) }
+
+#[tauri::command]
+fn list_versions(project_path: String) -> AppResult<Vec<storage::VersionEntry>> { storage::list_versions(&storage::path(project_path)) }
+
+#[tauri::command]
+fn read_version(project_path: String, name: String) -> AppResult<storage::VersionPayload> { storage::read_version(&storage::path(project_path), &name) }
+
+#[tauri::command]
 fn recent_projects(db: State<'_, AppState>) -> AppResult<Vec<RecentProject>> {
     db.0.lock().map_err(|_| AppError::Validation("The local project index is temporarily unavailable.".into()))?.list_recent()
 }
@@ -75,6 +84,35 @@ fn reveal_in_explorer(project_path: String) -> AppResult<()> {
     Ok(())
 }
 
+/// Writes an exported file (PDF, FDX, backup, report…) to a path the writer chose in the native Save dialog.
+#[tauri::command]
+fn write_export_file(path: String, data: Vec<u8>) -> AppResult<()> {
+    const ALLOWED: [&str; 11] = ["pdf", "fdx", "docx", "rtf", "fountain", "txt", "md", "html", "zip", "csv", "json"];
+    let target = PathBuf::from(&path);
+    let extension = target.extension().and_then(|value| value.to_str()).unwrap_or_default().to_ascii_lowercase();
+    if !ALLOWED.contains(&extension.as_str()) {
+        return Err(AppError::Validation(format!("Olukotan doesn't save .{extension} files.")));
+    }
+    std::fs::write(&target, data)?;
+    Ok(())
+}
+
+/// Opens a web or email link in the writer's default browser or mail app.
+#[tauri::command]
+fn open_external(url: String) -> AppResult<()> {
+    let lower = url.to_ascii_lowercase();
+    if !(lower.starts_with("https://") || lower.starts_with("http://") || lower.starts_with("mailto:")) {
+        return Err(AppError::Validation("Only web and email links can be opened.".into()));
+    }
+    #[cfg(target_os = "windows")]
+    Command::new("explorer.exe").arg(&url).spawn()?;
+    #[cfg(target_os = "macos")]
+    Command::new("open").arg(&url).spawn()?;
+    #[cfg(all(unix, not(target_os = "macos")))]
+    Command::new("xdg-open").arg(&url).spawn()?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -89,7 +127,7 @@ pub fn run() {
             app.manage(AppState(Mutex::new(db)));
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![create_project, open_project, save_screenplay, write_recovery, discard_recovery, record_export, recent_projects, remove_recent, pin_recent, get_settings, save_settings, reveal_in_explorer])
+        .invoke_handler(tauri::generate_handler![create_project, open_project, save_screenplay, write_recovery, discard_recovery, record_export, write_version, list_versions, read_version, recent_projects, remove_recent, pin_recent, get_settings, save_settings, reveal_in_explorer, write_export_file, open_external])
         .run(tauri::generate_context!())
         .expect("Olukotan failed to start");
 }

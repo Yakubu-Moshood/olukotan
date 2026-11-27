@@ -22,7 +22,7 @@ function stableId() {
 }
 
 export function sceneHeadingParts(heading: string) {
-  const match = heading.trim().match(/^(INT\.\/EXT\.|EXT\.\/INT\.|INT\.|EXT\.|I\/E\.|EST\.)\s*(.*?)(?:\s+-\s+([^-]+))?$/iu);
+  const match = heading.replace(/\\([*_\\])/gu, "$1").replace(/[*_]/gu, "").trim().match(/^(INT\.\/EXT\.|EXT\.\/INT\.|INT\.|EXT\.|I\/E\.|EST\.)\s*(.*?)(?:\s+-\s+([^-]+))?$/iu);
   return { intExt: match?.[1]?.toLocaleUpperCase("en-GB"), location: match?.[2]?.trim(), timeOfDay: match?.[3]?.trim() };
 }
 
@@ -99,11 +99,11 @@ export function automaticContinued(elements: ScreenplayElement[], index: number,
   return false;
 }
 
-export function renderedCharacterCue(elements: ScreenplayElement[], index: number, settings: ScreenplaySettings) {
+export function renderedCharacterCue(elements: ScreenplayElement[], index: number, settings: ScreenplaySettings, contdText = "(CONT'D)") {
   const parsed = parseCharacter(elements[index]?.text ?? "");
   const extensions = [...parsed.extensions];
   const hasManualContinued = extensions.some((extension) => extension.replace(/[’`]/gu, "'").toLocaleUpperCase("en-GB") === "CONT'D");
-  if (automaticContinued(elements, index, settings) && !hasManualContinued) extensions.push("CONT'D");
+  if (automaticContinued(elements, index, settings) && !hasManualContinued) extensions.push(contdText.replace(/^\(|\)$/gu, ""));
   return [parsed.name, ...extensions.map((extension) => `(${extension})`)].filter(Boolean).join(" ");
 }
 

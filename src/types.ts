@@ -60,6 +60,8 @@ export interface ScreenplaySettings {
     characters: boolean;
     transitions: boolean;
     shots: boolean;
+    /** Capitalise the first letter of each sentence in action and dialogue. */
+    sentences?: boolean;
   };
   revisions: {
     enabled: boolean;
@@ -69,6 +71,8 @@ export interface ScreenplaySettings {
   pagination: {
     pageSize: "A4" | "US Letter";
     viewMode: "page" | "continuous";
+    /** Blank lines before scene headings (Final Draft default: 2). */
+    sceneHeadingSpacing?: 1 | 2;
   };
   exportDefaults: {
     format: ExportFormat;
@@ -96,10 +100,87 @@ export interface SceneMetadata {
   omitted?: boolean;
 }
 
+export interface RevisionSet {
+  id: string;
+  name: string;
+  colour: string;
+  mark: string;
+  date?: string;
+  hidden?: boolean;
+}
+
+export interface Beat {
+  id: string;
+  title: string;
+  body?: string;
+  colour?: string;
+  /** Position on the Beat Board canvas, in board pixels. */
+  x: number;
+  y: number;
+  /** Scenes this beat is linked to. */
+  sceneIds?: string[];
+}
+
+export interface LockedPageStart {
+  /** Element whose line begins the page. */
+  elementId: string;
+  /** Wrapped-line index within that element where the page begins (0 = start of element). */
+  line: number;
+  label: string;
+}
+
+export interface PageLock {
+  /** True once pages are locked; new material then creates A-pages. */
+  locked: boolean;
+  lockedAt?: string;
+  /** Where each locked page began, in page order. */
+  pageStarts: LockedPageStart[];
+}
+
+/** Per-element formatting (Format → Elements). Indents are inches from the page's left edge. */
+export interface ElementStyle {
+  left?: number;
+  right?: number;
+  spaceBefore?: number;
+  align?: "left" | "center" | "right";
+  spacing?: 1 | 1.5 | 2;
+  caps?: boolean;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+}
+
+export interface HeaderFooterText { left: string; center: string; right: string }
+export interface HeaderFooter { header: HeaderFooterText; footer: HeaderFooterText; showOnFirstPage: boolean }
+
+export interface MoresContinuedsText { more: string; contd: string; sceneBottom: string; sceneTop: string }
+
+export interface SmartTypeLists { characters: string[]; extensions: string[]; sceneIntros: string[]; locations: string[]; times: string[]; transitions: string[] }
+
+export interface Macro { id: string; key: string; text: string; elementType?: string }
+export interface Bookmark { id: string; name: string; elementId: string; createdAt: string }
+export interface VoiceAssignment { voice?: string; rate?: number; pitch?: number }
+
 export interface ProjectData {
   schemaVersion: 1;
+  elementStyles?: Partial<Record<string, ElementStyle>>;
+  font?: { family: string; size: number };
+  headerFooter?: HeaderFooter;
+  moresContinueds?: MoresContinuedsText;
+  smartType?: SmartTypeLists;
+  macros?: Macro[];
+  bookmarks?: Bookmark[];
+  voices?: Record<string, VoiceAssignment>;
+  customWords?: string[];
+  /** Page layout: margins in inches, and the "leading" cheat (extra or fewer lines per page). */
+  pageLayout?: { top: number; bottom: number; headerFromTop: number; footerFromBottom: number; linesAdjust: number };
   screenplaySettings: ScreenplaySettings;
   scenes: SceneMetadata[];
+  revisionSets: RevisionSet[];
+  beats: Beat[];
+  pageLock: PageLock;
+  /** Where the screenplay was imported from. For FDX, non-script sections are kept so export can write them back. */
+  importSource?: { format: "fdx" | "fountain"; fileName: string; importedAt: string; fdxTemplate?: string };
   productionSnapshots: { createdAt: string; reason: string; screenplay: string }[];
 }
 
@@ -108,13 +189,13 @@ export const defaultScreenplaySettings = (): ScreenplaySettings => ({
   sceneNumbers: { enabled: false, mode: "automatic", position: "both", showInEditor: true, showInExport: true, showInPrint: true, startAt: 1 },
   pageNumbers: { enabled: true, position: "top-right", startOnPage: 2, customStartPage: 1, firstVisibleNumber: 1, hideOnFirstPage: true },
   continueds: { character: "automatic", dialogueMore: true, dialogueContinued: true, sceneContinued: "off" },
-  capitalisation: { sceneHeadings: true, characters: true, transitions: true, shots: true },
+  capitalisation: { sceneHeadings: true, characters: true, transitions: true, shots: true, sentences: true },
   revisions: { enabled: false, activeSetId: null, showMarks: true },
-  pagination: { pageSize: "A4", viewMode: "page" },
+  pagination: { pageSize: "A4", viewMode: "page", sceneHeadingSpacing: 2 },
   exportDefaults: { format: "pdf", includeTitlePage: true, includeSceneNumbers: true, includePageNumbers: true, includeScriptNotes: false, includeRevisionMarks: false, includeOmittedScenes: false },
 });
 
-export const defaultProjectData = (): ProjectData => ({ schemaVersion: 1, screenplaySettings: defaultScreenplaySettings(), scenes: [], productionSnapshots: [] });
+export const defaultProjectData = (): ProjectData => ({ schemaVersion: 1, screenplaySettings: defaultScreenplaySettings(), scenes: [], revisionSets: [], beats: [], pageLock: { locked: false, pageStarts: [] }, productionSnapshots: [] });
 
 export function migrateProjectData(value?: Partial<ProjectData>): ProjectData {
   const defaults = defaultProjectData();
@@ -122,6 +203,12 @@ export function migrateProjectData(value?: Partial<ProjectData>): ProjectData {
   return {
     schemaVersion: 1,
     scenes: Array.isArray(value?.scenes) ? value.scenes : [],
+    revisionSets: Array.isArray(value?.revisionSets) ? value.revisionSets : [],
+    beats: Array.isArray(value?.beats) ? value.beats : [],
+    pageLock: value?.pageLock && Array.isArray(value.pageLock.pageStarts) ? value.pageLock : { locked: false, pageStarts: [] },
+    ...(value?.importSource ? { importSource: value.importSource } : {}),
+    ...(["elementStyles", "font", "headerFooter", "moresContinueds", "smartType", "macros", "bookmarks", "voices", "customWords", "pageLayout"] as const)
+      .reduce((out, key) => (value && value[key] !== undefined ? { ...out, [key]: value[key] } : out), {} as Partial<ProjectData>),
     productionSnapshots: Array.isArray(value?.productionSnapshots) ? value.productionSnapshots : [],
     screenplaySettings: {
       ...defaults.screenplaySettings, ...settings,
@@ -167,7 +254,18 @@ export interface CreateProjectInput {
   author: string;
 }
 
+export interface ToolbarPrefs { showToolbar: boolean; showRuler: boolean; showStatusBar: boolean; hidden: string[] }
+
 export interface AppSettings {
+  supabaseUrl?: string;
+  supabaseKey?: string;
+  collaboratorName?: string;
+  toolbar?: ToolbarPrefs;
+  spellCheckAsYouType?: boolean;
+  backupsToKeep?: number;
+  /** Minutes between automatic backups (desktop). */
+  backupMinutes?: number;
+  zoom?: number;
   defaultProjectFolder: string;
   defaultAuthor: string;
   theme: "system" | "light" | "dark";
