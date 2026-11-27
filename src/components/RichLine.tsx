@@ -75,8 +75,18 @@ function pointAt(root: HTMLElement, target: number): { node: Node; offset: numbe
   return last ? { node: last, offset: last.nodeValue?.length ?? 0 } : { node: root, offset: 0 };
 }
 
-export function RichLine({ value, label, readOnly, spellCheck, className, onChange, onFormat, onKeyDown, onPaste, onFocus, onContextMenu, register }: {
+/**
+ * Part of an element shown on one page in Page View: visible characters [start, end) of the
+ * element's text (end omitted = to the end). Offsets passed to and from the editor stay
+ * element-wide, so Enter, Backspace, formatting and the cursor behave as if the line were whole.
+ */
+export interface LineFragment { start: number; end?: number }
+
+export function RichLine({ value, label, readOnly, spellCheck, className, fragment, onCrossFragment, onChange, onFormat, onKeyDown, onPaste, onFocus, onContextMenu, register }: {
   value: string; label: string; readOnly: boolean; spellCheck: boolean; className?: string;
+  fragment?: LineFragment;
+  /** The caret wants to leave this fragment (arrow keys, or text reflowed onto another page): element-wide offset. */
+  onCrossFragment?(cursor: number): void;
   /** Text edited by typing; `cursor` is a visible-text offset. */
   onChange(next: string, cursor: number): void;
   /** Formatting changed over a range; keep that range selected. */
@@ -92,26 +102,35 @@ export function RichLine({ value, label, readOnly, spellCheck, className, onChan
   const latest = useRef(value); latest.current = value;
   const composing = useRef(false);
   const typingStyle = useRef<StyleSet | null>(null);
+  // Fragment bounds. While typing, the page layout catches up a moment later, so the end of the
+  // fragment being edited follows the text typed into it until new bounds arrive.
+  const bounds = useRef({ start: 0, end: undefined as number | undefined, key: "" });
+  const key = fragment ? `${fragment.start}:${fragment.end ?? ""}` : "";
+  if (bounds.current.key !== key) bounds.current = { start: fragment?.start ?? 0, end: fragment?.end, key };
+  const sliceOf = (text: string) => { const chars = charsOf(text); return chars.slice(bounds.current.start, bounds.current.end ?? chars.length); };
+  const local = (offset: number) => offset - bounds.current.start;
 
   const selection = (): [number, number] => {
     const root = ref.current, sel = window.getSelection();
-    if (!root || !sel || !sel.rangeCount) return [0, 0];
+    if (!root || !sel || !sel.rangeCount) return [bounds.current.start, bounds.current.start];
     const range = sel.getRangeAt(0);
-    if (!root.contains(range.startContainer)) return [0, 0];
+    if (!root.contains(range.startContainer)) return [bounds.current.start, bounds.current.start];
     const a = offsetIn(root, range.startContainer, range.startOffset), b = offsetIn(root, range.endContainer, range.endOffset);
-    return [Math.min(a, b), Math.max(a, b)];
+    return [Math.min(a, b) + bounds.current.start, Math.max(a, b) + bounds.current.start];
   };
 
   const handle = useRef<RichLineHandle>(null as unknown as RichLineHandle);
   if (!handle.current) handle.current = {
     get element() { return ref.current; },
-    get value() { return ref.current?.textContent?.replace(/ /gu, " ") ?? ""; },
+    get value() { return fragment ? charsOf(latest.current).map((c) => c.ch).join("") : ref.current?.textContent?.replace(/ /gu, " ") ?? ""; },
     get selectionStart() { return selection()[0]; },
     get selectionEnd() { return selection()[1]; },
     focus() { ref.current?.focus({ preventScroll: true }); },
     setSelectionRange(start: number, end = start) {
       const root = ref.current, sel = window.getSelection(); if (!root || !sel) return;
-      const a = pointAt(root, start), b = pointAt(root, end);
+      const length = sliceOf(latest.current).length;
+      const clamp = (offset: number) => Math.max(0, Math.min(length, local(offset)));
+      const a = pointAt(root, clamp(start)), b = pointAt(root, clamp(end));
       const range = document.createRange(); range.setStart(a.node, a.offset); range.setEnd(b.node, b.offset);
       sel.removeAllRanges(); sel.addRange(range);
     },
@@ -133,19 +152,36 @@ export function RichLine({ value, label, readOnly, spellCheck, className, onChan
     },
   };
   const onChangeRef = useRef(onChange); onChangeRef.current = onChange;
+  const onCrossRef = useRef(onCrossFragment); onCrossRef.current = onCrossFragment;
   const onFormatRef = useRef(onFormat); onFormatRef.current = onFormat;
 
   useEffect(() => { register(handle.current); return () => register(null); }, [register]);
 
   // Render only when the DOM no longer represents the value, so typing never loses the caret.
+  const rendered = useRef({ start: 0 });
   useLayoutEffect(() => {
     const root = ref.current; if (!root || composing.current) return;
-    if (toFountain(readChars(root)) !== canonical(value)) root.innerHTML = toHtml(value);
-  }, [value]);
+    const shown = toFountain(sliceOf(value));
+    if (toFountain(readChars(root)) === canonical(shown)) { rendered.current.start = bounds.current.start; return; }
+    // Text moved across a page boundary under the caret: keep the caret on the same character.
+    const focused = document.activeElement === root;
+    const sel = window.getSelection();
+    const caret = focused && sel?.rangeCount ? offsetIn(root, sel.getRangeAt(0).startContainer, sel.getRangeAt(0).startOffset) + rendered.current.start : undefined;
+    root.innerHTML = toHtml(shown);
+    rendered.current.start = bounds.current.start;
+    if (caret === undefined || !fragment) return;
+    const length = sliceOf(value).length;
+    if (caret < bounds.current.start || caret > bounds.current.start + length) { onCrossRef.current?.(caret); return; }
+    handle.current.setSelectionRange(caret);
+  }, [value, key]);
 
   const handleInput = () => {
     const root = ref.current; if (!root || composing.current) return;
-    let next = toFountain(readChars(root));
+    const all = charsOf(latest.current);
+    const { start, end } = bounds.current;
+    const typed = readChars(root);
+    let next = toFountain([...all.slice(0, start), ...typed, ...all.slice(end ?? all.length)]);
+    if (end !== undefined) bounds.current.end = start + typed.length;
     const [cursor] = selection();
     const style = typingStyle.current;
     if (style) {
@@ -173,6 +209,16 @@ export function RichLine({ value, label, readOnly, spellCheck, className, onChan
         return;
       }
       if (["arrowleft", "arrowright", "arrowup", "arrowdown", "home", "end", "pageup", "pagedown"].includes(key)) typingStyle.current = null;
+      if (fragment && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        // Keys that run off either end of a page fragment carry on into the element's other part.
+        const [a, b] = selection(); const start = bounds.current.start, end = start + sliceOf(latest.current).length;
+        const isLast = bounds.current.end === undefined;
+        const atStart = a === b && a === start && start > 0, atEnd = a === b && b === end && !isLast;
+        if (atStart && (key === "arrowleft" || key === "arrowup")) { event.preventDefault(); onCrossRef.current?.(start - 1); return; }
+        if (atEnd && (key === "arrowright" || key === "arrowdown")) { event.preventDefault(); onCrossRef.current?.(end + 1); return; }
+        if (atStart && key === "backspace") { event.preventDefault(); onChangeRef.current(replaceRange(latest.current, start - 1, start, ""), start - 1); onCrossRef.current?.(start - 1); return; }
+        if (atEnd && key === "delete") { event.preventDefault(); onChangeRef.current(replaceRange(latest.current, end, end + 1, ""), end); return; }
+      }
       onKeyDown(event, handle.current);
     }}
     onPaste={(event) => {

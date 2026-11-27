@@ -57,6 +57,12 @@ export interface Layout {
   pages: PageLayout[];
   /** Page index (1-based) where each element first appears. */
   elementPage: Map<string, number>;
+  /**
+   * For every element printed on more than one page: where each page's part starts, as a
+   * visible-character offset into the element's text. The editor's Page View uses this so a split
+   * speech or paragraph sits on exactly the pages the PDF prints it on.
+   */
+  fragments: Map<string, { page: number; start: number }[]>;
 }
 
 interface ElementSpec { left: number; right: number; before: number; align: "left" | "right" | "center" }
@@ -148,14 +154,25 @@ function toRuns(chars: StyledChar[]): TextRun[] {
 
 /** Word-wraps styled text to a fixed column width. Returns one run-list per printed line. */
 export function wrapText(text: string, columns: number): TextRun[][] {
+  return wrapLines(text, columns).map((line) => line.runs);
+}
+
+/**
+ * Word-wraps styled text and also reports where each printed line starts, as an offset into the
+ * text's visible characters (the same offsets the editor uses), so a paragraph split across pages
+ * can be shown in the editor exactly where the PDF breaks it.
+ */
+export function wrapLines(text: string, columns: number): { runs: TextRun[]; start: number }[] {
   const chars = styledChars(text);
-  if (!chars.length) return [[]];
-  const lines: StyledChar[][] = [];
-  let line: StyledChar[] = [], width = 0, lastSpace = -1;
-  for (const c of chars) {
-    if (isMark(c.ch)) { line.push(c); continue; }
+  if (!chars.length) return [{ runs: [], start: 0 }];
+  type Indexed = StyledChar & { at: number };
+  const lines: Indexed[][] = [];
+  let line: Indexed[] = [], width = 0, lastSpace = -1;
+  chars.forEach((char, at) => {
+    const c = { ...char, at };
+    if (isMark(c.ch)) { line.push(c); return; }
     if (width >= columns) {
-      if (c.ch === " ") { lines.push(line); line = []; width = 0; lastSpace = -1; continue; }
+      if (c.ch === " ") { lines.push(line); line = []; width = 0; lastSpace = -1; return; }
       if (lastSpace > 0) {
         const head = line.slice(0, lastSpace), tail = line.slice(lastSpace + 1);
         lines.push(head); line = tail; width = tail.filter((t) => !isMark(t.ch)).length;
@@ -164,12 +181,17 @@ export function wrapText(text: string, columns: number): TextRun[][] {
     }
     if (c.ch === " ") lastSpace = line.length;
     line.push(c); width++;
-  }
+  });
   lines.push(line);
-  return lines.map((l) => toRuns(trimTrailing(l)));
+  let previousEnd = 0;
+  return lines.map((l) => {
+    const start = l.length ? l[0].at : previousEnd;
+    previousEnd = l.length ? l[l.length - 1].at + 1 : previousEnd;
+    return { runs: toRuns(trimTrailing(l)), start };
+  });
 }
 
-function trimTrailing(line: StyledChar[]) { let end = line.length; while (end > 0 && line[end - 1].ch === " ") end--; return line.slice(0, end); }
+function trimTrailing<T extends StyledChar>(line: T[]): StyledChar[] { let end = line.length; while (end > 0 && line[end - 1].ch === " ") end--; return line.slice(0, end).map(({ ch, bold, italic, underline }) => ({ ch, bold, italic, underline })); }
 
 export const runsText = (runs: TextRun[]) => runs.map((run) => run.text).join("");
 const endsSentence = (runs: TextRun[]) => /[.!?…]["'”’)]*$|--$|—$/u.test(runsText(runs).trimEnd());
@@ -178,7 +200,9 @@ const endsSentence = (runs: TextRun[]) => /[.!?…]["'”’)]*$|--$|—$/u.test
 // Blocks
 // ---------------------------------------------------------------------------
 
-interface BlockLine { element: ScreenplayElement; lineIndex: number; runs: TextRun[]; type: ScreenplayElementType; x: number; align: "left" | "right" | "center"; kind: LineKind; sceneNumber?: string; revisionMark?: string }
+interface BlockLine { element: ScreenplayElement; lineIndex: number; runs: TextRun[]; type: ScreenplayElementType; x: number; align: "left" | "right" | "center"; kind: LineKind; sceneNumber?: string; revisionMark?: string;
+  /** Visible-character offset in the element's text where this printed line starts. */
+  start?: number }
 type Specs = ReturnType<typeof elementSpecs>;
 
 interface Block {
@@ -193,6 +217,8 @@ interface Block {
   characterName?: string;
   /** Print (MORE) after this block (the head of a speech split at a locked page). */
   moreAfter?: boolean;
+  /** Element index range [start, end) of a speech, so it can be re-wrapped as a dual-dialogue column. */
+  range?: [number, number];
 }
 
 export interface PaginationOptions {
@@ -210,24 +236,31 @@ function elementLines(element: ScreenplayElement, text: string, options: Paginat
   const align = format?.align ?? spec.align;
   const spacing = format?.spacing ?? spec.spacing;
   const columns = Math.max(4, Math.round(((spec.right - spec.left) * 72) / (0.6 * fontSize)));
-  const wrapped = wrapText(spec.caps ? text.toLocaleUpperCase("en-GB") : text, columns).map((runs) => runs.map((run) => ({ ...spec.style, ...run })));
+  const wrapped = wrapLines(spec.caps ? text.toLocaleUpperCase("en-GB") : text, columns).map((line) => ({ start: line.start, runs: line.runs.map((run) => ({ ...spec.style, ...run })) }));
   const sceneNumber = type === "scene-heading" ? options.sceneNumber?.(element) : undefined;
   const revisionMark = options.revisionMark?.(element);
   const x = align === "right" ? spec.right : align === "center" ? (spec.left + spec.right) / 2 : spec.left;
   const out: (BlockLine | null)[] = [];
-  wrapped.forEach((runs, index) => {
+  wrapped.forEach(({ runs, start }, index) => {
     if (index && (spacing === 2 || (spacing === 1.5 && index % 2 === 0))) out.push(null);
-    out.push({ element, lineIndex: index, runs, type, x, align, kind: "body" as const,
+    out.push({ element, lineIndex: index, runs, start, type, x, align, kind: "body" as const,
       ...(index === 0 && sceneNumber ? { sceneNumber } : {}), ...(revisionMark ? { revisionMark } : {}) });
   });
   return out;
 }
 
-function shiftDual(lines: BlockLine[], side: 0 | 1): BlockLine[] {
-  // Dual dialogue: each column is roughly half width. Left column begins at the
-  // action margin; right column at the page centre.
-  const offset = side === 0 ? -1.0 : 1.75;
-  return lines.map((line) => ({ ...line, x: line.x + offset }));
+/**
+ * Dual dialogue columns (inches from the page edge). Each speech is re-wrapped to its own half of
+ * the page, so the two columns never overlap: left column 1.5"–4.25", right column 4.75"–7.5".
+ */
+const DUAL_COLUMNS: Record<0 | 1, Partial<Record<ScreenplayElementType, { left: number; right: number }>>> = {
+  0: { character: { left: 2.4, right: 4.25 }, parenthetical: { left: 1.9, right: 4.0 }, dialogue: { left: 1.5, right: 4.25 } },
+  1: { character: { left: 5.65, right: 7.5 }, parenthetical: { left: 5.15, right: 7.25 }, dialogue: { left: 4.75, right: 7.5 } },
+};
+function dualSpecs(specs: Specs, side: 0 | 1): Specs {
+  const out = { ...specs };
+  for (const [type, column] of Object.entries(DUAL_COLUMNS[side]) as [ScreenplayElementType, { left: number; right: number }][]) out[type] = { ...specs[type], ...column };
+  return out;
 }
 
 function buildBlocks(document: ScreenplayDocument, projectData: ProjectData, options: PaginationOptions, specs: Specs, fontSize: number): Block[] {
@@ -255,21 +288,22 @@ function buildBlocks(document: ScreenplayDocument, projectData: ProjectData, opt
     if (element.type === "note" && !options.includeNotes) continue;
     if (!element.text.trim()) continue;
     if (element.type === "character") {
-      const group: (BlockLine | null)[] = [...elementLines(element, renderedCharacterCue(elements, i, settings, projectData.moresContinueds?.contd), options, "character", specs, fontSize)];
+      const speech = (start: number, end: number, using: Specs) => {
+        const lines: (BlockLine | null)[] = [...elementLines(elements[start], renderedCharacterCue(elements, start, settings, projectData.moresContinueds?.contd), options, "character", using, fontSize)];
+        for (let k = start + 1; k < end; k++) if (elements[k].text.trim()) lines.push(...elementLines(elements[k], elements[k].text, options, elements[k].type, using, fontSize));
+        return lines;
+      };
       const characterName = parseCharacter(element.text).name;
       let j = i + 1;
-      for (; j < elements.length && ["parenthetical", "dialogue"].includes(elements[j].type); j++) {
-        if (!elements[j].text.trim()) continue;
-        group.push(...elementLines(elements[j], elements[j].text, options, elements[j].type, specs, fontSize));
-      }
+      while (j < elements.length && ["parenthetical", "dialogue"].includes(elements[j].type)) j++;
       const dualId = element.metadata?.dualDialogueGroupId;
       const previous = blocks.at(-1);
-      if (dualId && previous?.kind === "dialogue" && previous.lines[0] && (previous.lines[0] as BlockLine).element.metadata?.dualDialogueGroupId === dualId) {
-        const left = shiftDual(previous.lines.filter(Boolean) as BlockLine[], 0);
-        const right = shiftDual(group.filter(Boolean) as BlockLine[], 1);
+      if (dualId && previous?.kind === "dialogue" && previous.range && previous.lines[0] && (previous.lines[0] as BlockLine).element.metadata?.dualDialogueGroupId === dualId) {
+        const left = speech(previous.range[0], previous.range[1], dualSpecs(specs, 0)).filter(Boolean) as BlockLine[];
+        const right = speech(i, j, dualSpecs(specs, 1)).filter(Boolean) as BlockLine[];
         blocks[blocks.length - 1] = { kind: "dual", type: "character", before: previous.before, columns: [left, right], lines: [], sceneId: currentSceneId };
       } else {
-        blocks.push({ kind: "dialogue", type: "character", before: element.metadata?.format?.spaceBefore ?? specs.character.before, lines: group, sceneId: currentSceneId, characterName });
+        blocks.push({ kind: "dialogue", type: "character", before: element.metadata?.format?.spaceBefore ?? specs.character.before, lines: speech(i, j, specs), sceneId: currentSceneId, characterName, range: [i, j] });
       }
       i = j - 1; continue;
     }
@@ -294,6 +328,7 @@ export function paginate(document: ScreenplayDocument, projectData: ProjectData,
   const capacity = geometry.linesPerPage - (sceneContinued !== "off" ? 1 : 0);
   const pages: PageLayout[] = [];
   const elementPage = new Map<string, number>();
+  const pieces = new Map<string, { page: number; start: number }[]>();
   const continuedCount = new Map<string, number>();
   const locks = new Map((options.lockedPages ?? []).map((lock) => [`${lock.elementId}:${lock.line}`, lock.label]));
   let lockBase: string | undefined, lockSuffix = 0;
@@ -320,6 +355,10 @@ export function paginate(document: ScreenplayDocument, projectData: ProjectData,
         ...(line.sceneNumber ? { sceneNumber: line.sceneNumber } : {}), ...(line.revisionMark ? { revisionMark: line.revisionMark } : {}) });
       if (!page.elementIds.includes(line.element.id)) page.elementIds.push(line.element.id);
       if (!elementPage.has(line.element.id)) elementPage.set(line.element.id, page.index);
+      if (line.kind === "body" && line.start !== undefined) {
+        const list = pieces.get(line.element.id) ?? [];
+        if (list.at(-1)?.page !== page.index) { list.push({ page: page.index, start: line.start }); pieces.set(line.element.id, list); }
+      }
     }
     row++;
   }
@@ -369,10 +408,38 @@ export function paginate(document: ScreenplayDocument, projectData: ProjectData,
     if (block.kind === "dual") {
       const [left, right] = block.columns!;
       const height = Math.max(left.length, right.length);
-      if (row > 0 && before + height > remaining()) breakPage(true);
+      // Move to a new page when the pair would fit there whole, or too little room is left to start it;
+      // otherwise start here and continue it overleaf (never strand the scene heading above it).
+      if (row > 0 && before + height > remaining() && (height <= capacity || remaining() - before < 4)) breakPage(true);
       const effectiveBefore = row === 0 ? 0 : before;
       row += effectiveBefore;
       const startRow = row;
+      if (height > remaining()) {
+        // Side-by-side speeches taller than the page: both columns break at the same row, each
+        // column that continues gets (MORE) under it and resumes on the next page under
+        // "NAME (CONT'D)", so no line is pushed off the bottom of the page.
+        const rows = remaining() - 1;
+        const splitAt = (column: BlockLine[]) => {
+          if (column.length <= rows) return column.length;
+          let keep = Math.max(2, rows);
+          while (keep > 2 && column[keep - 1]?.type === "parenthetical") keep--;
+          return keep;
+        };
+        const tails: BlockLine[][] = [];
+        for (const column of [left, right] as BlockLine[][]) {
+          const keep = splitAt(column);
+          column.slice(0, keep).forEach((line, offset) => { row = startRow + offset; place(line); });
+          const cue = column[0];
+          if (keep < column.length && cue) {
+            row = startRow + keep; place({ ...cue, runs: [{ text: texts.more }], kind: "more", lineIndex: -1 });
+            const contd = settings.continueds.dialogueContinued !== false ? continuedCue(runsText(cue.runs), texts.contd) : runsText(cue.runs);
+            tails.push([{ ...cue, runs: [{ text: contd }], kind: "contd-cue", lineIndex: -1 }, ...column.slice(keep)]);
+          } else tails.push([]);
+        }
+        breakPage(true);
+        blocks.splice(b + 1, 0, { ...block, before: 0, columns: [tails[0], tails[1]] });
+        continue;
+      }
       for (const [columnLines] of [[left], [right]] as const) {
         columnLines.forEach((line, offset) => { row = startRow + offset; place(line); });
       }
@@ -435,7 +502,8 @@ export function paginate(document: ScreenplayDocument, projectData: ProjectData,
   }
   if (page.lines.length || !pages.length) pages.push(page);
   if (options.lockedPages?.length) combineMissingLockedLabels(pages, options.lockedPages);
-  return { geometry, pages, elementPage };
+  const fragments = new Map([...pieces].filter(([, list]) => list.length > 1));
+  return { geometry, pages, elementPage, fragments };
 }
 
 /** A, B, … Z, AA, AB … */

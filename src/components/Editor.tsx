@@ -1,10 +1,11 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { wordCount } from "../lib/screenplay";
-import { elementSpecs, lockPages, paginate } from "../lib/pagination";
+import { elementSpecs, lockPages, paginate, type LayoutLine } from "../lib/pagination";
+import { pageViewGroups } from "../lib/page-view";
 import { applyRevisionMarks, clearRevisionMarks, nextRevisionSet, revisionMarkFor, revisionSetById } from "../lib/revisions";
 import { ReportsDialog } from "./ReportsDialog";
 import { TitlePageDialog } from "./TitlePageDialog";
-import { RichLine, type RichLineHandle } from "./RichLine";
+import { RichLine, type LineFragment, type RichLineHandle } from "./RichLine";
 import { autoCapitalise, replaceRange, splitFormatted, visibleLength, visibleText, type Style } from "../lib/rich-text";
 import { IndexCards, Navigator } from "./Navigator";
 import { BeatBoard } from "./BeatBoard";
@@ -95,13 +96,29 @@ export function Editor(props: EditorProps) {
   const [notice, setNoticeText] = useState("");
   const [speaking, setSpeaking] = useState<SpeechLine | null>(null);
   const [findQuery, setFindQuery] = useState("");
-  const textareas = useRef(new Map<string, RichLineHandle>());
+  // One handle per rendered line; in Page View an element split across pages has one per fragment.
+  const textareas = useRef(new Map<string, Map<string, { handle: RichLineHandle; start: number; end?: number }>>());
   const registrations = useRef(new Map<string, (handle: RichLineHandle | null) => void>());
   const paper = useRef<HTMLDivElement>(null);
-  const registerLine = (id: string) => {
-    let callback = registrations.current.get(id);
-    if (!callback) { callback = (handle) => { if (handle) textareas.current.set(id, handle); else { textareas.current.delete(id); registrations.current.delete(id); } }; registrations.current.set(id, callback); }
+  const registerLine = (id: string, fragment?: LineFragment) => {
+    const part = `${fragment?.start ?? 0}:${fragment?.end ?? ""}`, key = `${id}|${part}`;
+    let callback = registrations.current.get(key);
+    if (!callback) {
+      callback = (handle) => {
+        const parts = textareas.current.get(id) ?? new Map();
+        if (handle) { parts.set(part, { handle, start: fragment?.start ?? 0, end: fragment?.end }); textareas.current.set(id, parts); }
+        else { parts.delete(part); if (!parts.size) textareas.current.delete(id); registrations.current.delete(key); }
+      };
+      registrations.current.set(key, callback);
+    }
     return callback;
+  };
+  /** The line showing `cursor` of an element (or the focused part, or its first part). */
+  const lineHandle = (id: string | undefined, cursor?: number): RichLineHandle | undefined => {
+    const parts = id ? [...(textareas.current.get(id)?.values() ?? [])].sort((a, b) => a.start - b.start) : [];
+    if (!parts.length) return undefined;
+    if (cursor !== undefined) return (parts.find((part) => cursor >= part.start && (part.end === undefined || cursor < part.end)) ?? parts.at(-1)!).handle;
+    return (parts.find((part) => part.handle.element === globalThis.document?.activeElement) ?? parts[0]).handle;
   };
   const focusRequest = useRef<FocusRequest | null>(null);
   const history = useRef<History>({ past: [], future: [] });
@@ -133,7 +150,7 @@ export function Editor(props: EditorProps) {
 
   useEffect(() => {
     const request = focusRequest.current; if (!request) return;
-    const element = document.elements[request.index]; const area = element && textareas.current.get(element.id);
+    const element = document.elements[request.index]; const area = element && lineHandle(element.id, request.cursor);
     if (area) { area.focus(); area.setSelectionRange(request.cursor, request.end ?? request.cursor); area.scrollIntoView?.({ block: "nearest" }); }
     focusRequest.current = null;
   }, [document]);
@@ -295,7 +312,7 @@ export function Editor(props: EditorProps) {
     return true;
   };
 
-  const activeHandle = () => (active ? textareas.current.get(active.id) : undefined);
+  const activeHandle = () => lineHandle(active?.id);
   const toggleFormat = (style: Style) => activeHandle()?.toggle(style);
   const onFormat = (index: number, next: string, start: number, end: number) => {
     const elements = [...document.elements]; elements[index] = { ...elements[index], text: next };
@@ -777,15 +794,9 @@ export function Editor(props: EditorProps) {
   })();
 
   // ---- Page rendering ----
-  const groups = useMemo(() => {
-    const out: { page: number; items: { element: ScreenplayElement; index: number }[] }[] = [];
-    document.elements.forEach((element, index) => {
-      const page = pageView ? (layout.elementPage.get(element.id) ?? out.at(-1)?.page ?? 1) : 1;
-      if (!out.length || out.at(-1)!.page !== page) out.push({ page, items: [] });
-      out.at(-1)!.items.push({ element, index });
-    });
-    return out;
-  }, [document.elements, layout, pageView]);
+  // Page View mirrors the PDF page by page: split speeches and paragraphs appear as fragments on each
+  // page they print on, with (MORE) / (CONT'D) / CONTINUED at the same breaks.
+  const groups = useMemo(() => pageViewGroups(document.elements, layout, pageView), [document.elements, layout, pageView]);
   const fontFamily = `"${projectData.font?.family ?? "Courier Prime"}", "Courier Prime", "Courier New", monospace`;
   const fontSize = projectData.font?.size ?? 12;
   const geometry = layout.geometry;
@@ -793,15 +804,25 @@ export function Editor(props: EditorProps) {
   const pageLabel = (page: number) => layout.pages[page - 1]?.label ?? String(page);
   const activeSpec = specs[active?.type ?? "action"];
 
-  const renderBlock = ({ element, index }: { element: ScreenplayElement; index: number }, firstOnSheet: boolean) => {
+  // (MORE) and NAME (CONT'D) sit at the character indent (the editor stacks dual speeches rather than
+  // printing them side by side); CONTINUED lines keep the paginator's position.
+  const renderDecoration = (line: LayoutLine, key: string) => {
+    const x = line.kind === "more" || line.kind === "contd-cue" ? specs.character.left : line.x;
+    return <div key={key} className={`screenplay-block page-view-decoration decoration-${line.kind}`} contentEditable={false} aria-hidden
+    style={{ marginLeft: line.align === "left" ? `calc(var(--in) * ${x - 1.5})` : 0, width: line.align === "left" ? undefined : `calc(var(--in) * ${x - 1.5})`, textAlign: line.align }}>
+    {line.runs.map((run) => run.text).join("")}</div>;
+  };
+
+  const renderBlock = ({ element, index, fragment }: { element: ScreenplayElement; index: number; fragment?: LineFragment }, firstOnSheet: boolean) => {
     const spec = specs[element.type];
+    const continuation = !!fragment && fragment.start > 0;
     const elementFormat = element.metadata?.format;
     const before = firstOnSheet ? 0 : (elementFormat?.spaceBefore ?? (["dialogue", "parenthetical"].includes(element.type) ? 0 : spec.before));
     const selected = selection && index >= selection[0] && index <= selection[1];
     const presence = presenceFor(element.id);
     const sceneNumber = element.type === "scene-heading" ? displaySceneNumber(element, projectData) : undefined;
     const showNumbers = projectData.screenplaySettings.sceneNumbers.showInEditor;
-    return <div key={element.id} className={`screenplay-block screenplay-${element.type} ${element.type === "character" ? "character-cue" : ""} ${index === activeIndex ? "is-active" : ""} ${selected ? "block-selected" : ""} ${speaking?.index === index ? "is-speaking" : ""} ${element.metadata?.dualDialogueGroupId ? "is-dual" : ""}`}
+    return <div key={fragment ? `${element.id}@${fragment.start}` : element.id} className={`screenplay-block screenplay-${element.type} ${continuation ? "is-continuation" : ""} ${element.type === "character" ? "character-cue" : ""} ${index === activeIndex ? "is-active" : ""} ${selected ? "block-selected" : ""} ${speaking?.index === index ? "is-speaking" : ""} ${element.metadata?.dualDialogueGroupId ? "is-dual" : ""}`}
       data-element-type={element.type} data-rendered-cue={element.type === "character" ? renderedCharacterCue(document.elements, index, projectData.screenplaySettings, projectData.moresContinueds?.contd) : undefined}
       style={{ marginLeft: `calc(var(--in) * ${element.type === "page-break" ? 0 : spec.left - 1.5})`, width: element.type === "page-break" ? "100%" : `calc(var(--in) * ${spec.right - spec.left})`, marginTop: `calc(var(--line) * ${before})`,
         textAlign: elementFormat?.align ?? spec.align, ...(spec.caps ? { textTransform: "uppercase" } : {}), fontWeight: spec.style.bold ? 700 : undefined, fontStyle: spec.style.italic ? "italic" : undefined, textDecoration: spec.style.underline ? "underline" : undefined,
@@ -811,15 +832,15 @@ export function Editor(props: EditorProps) {
         ? <input className="scene-number-input scene-number-left" aria-label={`Scene number ${index + 1}`} value={sceneNumber} onFocus={() => setActiveIndex(index)} onChange={(event) => updateSceneNumber(index, event.target.value.replace(/#/g, ""))}/>
         : <span className="scene-number-gutter scene-number-left">{sceneNumber}</span>)}
       {sceneNumber && showNumbers && ["right", "both"].includes(projectData.screenplaySettings.sceneNumbers.position) && <span className="scene-number-gutter scene-number-right">{sceneNumber}</span>}
-      {element.type === "page-break" ? <button className="explicit-page-break" onClick={() => setActiveIndex(index)}>Page break</button> : <RichLine register={registerLine(element.id)}
+      {element.type === "page-break" ? <button className="explicit-page-break" onClick={() => setActiveIndex(index)}>Page break</button> : <RichLine register={registerLine(element.id, fragment)} fragment={fragment} onCrossFragment={(cursor) => focusElement(index, cursor)}
         label={`${ELEMENT_LABELS[element.type]} element ${index + 1}`} value={element.text} readOnly={project.readOnly}
         spellCheck={settings.spellCheckAsYouType !== false && !(["scene-heading", "character", "transition", "shot"].includes(element.type))}
         onFocus={() => setActiveIndex(index)} onChange={(next, cursor) => onTextChange(index, next, cursor)} onFormat={(next, start, end) => onFormat(index, next, start, end)}
         onKeyDown={(event, handle) => onKeyDown(event, index, handle)} onPaste={(text, handle) => onPaste(index, text, handle)}
         onContextMenu={(event) => { event.preventDefault(); setActiveIndex(index); setContextMenu({ x: event.clientX, y: event.clientY }); }}/>}
-      {automaticContinued(document.elements, index, projectData.screenplaySettings) && !parseCharacter(element.text).extensions.some((extension) => extension.replace(/[’`]/gu, "'") === "CONT'D") && <span className="automatic-continued" aria-label="Automatic character continued">{projectData.moresContinueds?.contd ?? "(CONT'D)"}</span>}
+      {!continuation && automaticContinued(document.elements, index, projectData.screenplaySettings) && !parseCharacter(element.text).extensions.some((extension) => extension.replace(/[’`]/gu, "'") === "CONT'D") && <span className="automatic-continued" aria-label="Automatic character continued">{projectData.moresContinueds?.contd ?? "(CONT'D)"}</span>}
       {element.metadata?.dualDialogueGroupId && element.type === "character" && <span className="dual-badge" title="Prints side by side with the neighbouring speech">DUAL</span>}
-      {index === activeIndex && suggestions.length > 0 && <div className="screenplay-suggestions" role="listbox" aria-label={`${ELEMENT_LABELS[element.type]} suggestions`}>{suggestions.map((suggestion, suggestionPosition) => <button className={suggestionPosition === suggestionIndex ? "selected" : ""} key={`${suggestion.type}-${suggestion.value}`} role="option" aria-label={suggestion.value} aria-selected={suggestionPosition === suggestionIndex} onMouseDown={(event) => event.preventDefault()} onClick={() => chooseSuggestion(suggestion)}><span>{suggestion.value}</span><small>{suggestion.category}</small></button>)}</div>}
+      {index === activeIndex && !continuation && suggestions.length > 0 && <div className="screenplay-suggestions" role="listbox" aria-label={`${ELEMENT_LABELS[element.type]} suggestions`}>{suggestions.map((suggestion, suggestionPosition) => <button className={suggestionPosition === suggestionIndex ? "selected" : ""} key={`${suggestion.type}-${suggestion.value}`} role="option" aria-label={suggestion.value} aria-selected={suggestionPosition === suggestionIndex} onMouseDown={(event) => event.preventDefault()} onClick={() => chooseSuggestion(suggestion)}><span>{suggestion.value}</span><small>{suggestion.category}</small></button>)}</div>}
       {revisionMarkFor(element, projectData) && <span className="revision-mark" aria-label="Revised">{revisionMarkFor(element, projectData)}</span>}
       {presence && <span className="presence-tag" style={{ background: presence.colour }}>{presence.name}</span>}
     </div>;
@@ -839,7 +860,8 @@ export function Editor(props: EditorProps) {
       }}>
       {groups.map((group, groupIndex) => <div key={`${group.page}-${groupIndex}`} className="sheet" style={{ width: `calc(var(--in) * ${geometry.widthIn})`, minHeight: pageView ? `calc(var(--in) * ${geometry.heightIn})` : undefined, padding: `calc(var(--in) * ${geometry.topIn}) calc(var(--in) * ${geometry.widthIn - 7.5}) calc(var(--in) * 1) calc(var(--in) * 1.5)` }}>
         {pageView && group.page > 1 && groupIndex > 0 && groups[groupIndex - 1].page !== group.page && <span className="sheet-number" aria-label={`Page ${pageLabel(group.page)}`}>{pageLabel(group.page)}.</span>}
-        {group.items.map((item, position) => renderBlock(item, pageView && position === 0 && groupIndex > 0))}
+        {group.items.map((item, position) => item.kind === "decoration" ? renderDecoration(item.line, `deco-${group.page}-${position}`)
+          : renderBlock({ element: document.elements[item.index], index: item.index, fragment: layout.fragments.has(document.elements[item.index].id) ? { start: item.start, end: item.end } : undefined }, pageView && position === 0 && groupIndex > 0))}
       </div>)}
     </div>
   </div>;
@@ -900,7 +922,7 @@ export function Editor(props: EditorProps) {
       onReplace={(miss, replacement, all) => { if (all) { const result = replaceAll(document.elements, { query: miss.word, matchCase: true, wholeWord: true }, replacement); commitElements(result.elements); } else commitElements(replaceMatch(document.elements, miss, replacement)); }}
       onAddWord={(word) => commitData({ ...projectData, customWords: [...new Set([...(projectData.customWords ?? []), word])] })} onClose={() => setDialog(null)}/>}
     {dialog === "thesaurus" && <ThesaurusDialog initialWord={selectedWord()} onReplace={replaceSelectedWord} onClose={() => setDialog(null)}/>}
-    {dialog === "speech" && <SpeechDialog elements={document.elements} activeIndex={activeIndex} sceneRange={sceneRangeOf(activeIndex)} voices={projectData.voices ?? {}} onLine={(line) => { setSpeaking(line); if (line) textareas.current.get(document.elements[line.index]?.id)?.scrollIntoView({ block: "center" }); }} onAssign={() => setDialog("voices")} onClose={() => { setSpeaking(null); setDialog(null); }}/>}
+    {dialog === "speech" && <SpeechDialog elements={document.elements} activeIndex={activeIndex} sceneRange={sceneRangeOf(activeIndex)} voices={projectData.voices ?? {}} onLine={(line) => { setSpeaking(line); if (line) lineHandle(document.elements[line.index]?.id)?.scrollIntoView({ block: "center" }); }} onAssign={() => setDialog("voices")} onClose={() => { setSpeaking(null); setDialog(null); }}/>}
     {dialog === "voices" && <VoicesDialog characters={collectKnownCharacters(document.elements)} voices={projectData.voices ?? {}} onSave={(voices) => { commitData({ ...projectData, voices }); setDialog(null); }} onClose={() => setDialog(null)}/>}
     {dialog === "names" && <NamesDialog onClose={() => setDialog(null)} onInsert={(name) => {
       const upper = name.toLocaleUpperCase("en-GB");
