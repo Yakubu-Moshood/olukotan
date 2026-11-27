@@ -4,6 +4,8 @@ import { readFileSync } from "node:fs";
 import { defaultProjectData } from "../types";
 import { parseFdx, writeFdx } from "./fdx";
 import { paginate, runsText } from "./pagination";
+import { shiftRevisionRuns } from "./revisions";
+import { parseFountain, serializeFountain } from "./screenplay-elements";
 
 const sample = readFileSync(`${process.cwd()}/src/lib/__fixtures__/sample.fdx`, "utf8");
 
@@ -87,5 +89,54 @@ describe("FDX round trip", () => {
     const xml = writeFdx(imported.document, defaultProjectData(), { includeSceneNumbers: false, includeNotes: false, includeTitlePage: false, titlePage: {} });
     expect(() => parseFdx(xml)).not.toThrow();
     expect(xml.startsWith("<?xml")).toBe(true);
+  });
+});
+
+describe("FDX run-level revision marks", () => {
+  // Hand-built in Final Draft 12's FDX format (not saved by Final Draft itself): one action
+  // paragraph holding an unmarked phrase, a Blue (ID 1) phrase and a Pink (ID 2) phrase.
+  const fixture = readFileSync(`${process.cwd()}/src/lib/__fixtures__/run-revisions.fdx`, "utf8");
+  const runsOf = (xml: string, paragraphIndex: number) => {
+    const doc = new DOMParser().parseFromString(xml, "application/xml");
+    const content = [...doc.documentElement.children].find((node) => node.nodeName === "Content")!;
+    const paragraph = [...content.children].filter((node) => node.nodeName === "Paragraph")[paragraphIndex];
+    return [...paragraph.children].filter((node) => node.nodeName === "Text").map((text) => [text.textContent, text.getAttribute("RevisionID") ?? "0", text.getAttribute("Style") ?? ""]);
+  };
+  const expected = [["The lamp turns slowly. ", "0", ""], ["A stranger climbs the stairs, ", "1", ""], ["soaked to the bone.", "2", "Bold"]];
+
+  it("imports each run's revision set", () => {
+    const { imported } = importToProject(fixture);
+    const action = imported.document.elements[1];
+    expect(action.text).toBe("The lamp turns slowly. A stranger climbs the stairs, **soaked to the bone.**");
+    expect(action.metadata?.revisionRuns).toEqual([[23, 53, "fdx-revision-1"], [53, 72, "fdx-revision-2"]]);
+    expect(action.metadata?.revisionSet).toBeUndefined();
+    const dialogue = imported.document.elements[3];
+    expect(dialogue.metadata?.revisionRuns).toEqual([[0, 14, "fdx-revision-2"]]);
+    // A paragraph marked from end to end by one set keeps the paragraph-level mark.
+    expect(imported.document.elements[4].metadata).toMatchObject({ revisionSet: "fdx-revision-1" });
+    expect(imported.document.elements[4].metadata?.revisionRuns).toBeUndefined();
+  });
+
+  it("keeps all three runs through save and reopen (Fountain) and FDX export", () => {
+    const { imported, data } = importToProject(fixture);
+    const reopened = parseFountain(serializeFountain(imported.document));
+    expect(reopened.elements.map((element) => element.metadata?.revisionRuns)).toEqual(imported.document.elements.map((element) => element.metadata?.revisionRuns));
+    for (const template of [data.importSource!.fdxTemplate, undefined]) {
+      const xml = writeFdx(reopened, data, { includeSceneNumbers: true, includeNotes: false, includeTitlePage: false, titlePage: {}, template });
+      expect(runsOf(xml, 1)).toEqual(expected);
+      expect(runsOf(xml, 3)).toEqual([["Shut the door.", "2", ""], [" The wind will put the light out.", "0", ""]]);
+      const again = parseFdx(xml);
+      expect(again.document.elements[1].metadata?.revisionRuns).toEqual(imported.document.elements[1].metadata?.revisionRuns);
+      expect(again.revisionSets.map((set) => [set.name, set.mark])).toEqual([["Blue", "*"], ["Pink", "+"]]);
+    }
+  });
+
+  it("moves run marks with the text when the paragraph is edited", () => {
+    const runs: [number, number, string][] = [[23, 52, "b"], [52, 71, "p"]];
+    const before = "The lamp turns slowly. A stranger climbs the stairs, soaked to the bone.";
+    // Insert "very " before "slowly": every run shifts right by five.
+    expect(shiftRevisionRuns(runs, before, before.replace("slowly", "very slowly"))).toEqual([[28, 57, "b"], [57, 76, "p"]]);
+    // In revision mode the inserted words take the active set.
+    expect(shiftRevisionRuns(runs, before, before.replace("climbs", "slowly climbs"), "p")).toEqual([[23, 34, "b"], [34, 41, "p"], [41, 59, "b"], [59, 78, "p"]]);
   });
 });

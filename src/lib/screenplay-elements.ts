@@ -15,6 +15,11 @@ export interface ScreenplayElement {
     characterExtension?: string;
     characterExtensions?: string[];
     revisionSet?: string;
+    /**
+     * Revision marks on parts of the paragraph, as [start, end, revisionSetId] ranges of visible
+     * characters (Final Draft marks individual text runs). Characters outside every range are unmarked.
+     */
+    revisionRuns?: [number, number, string][];
     omitted?: boolean;
     dualDialogueGroupId?: string;
     /** Paragraph-level overrides from Format → Alignment / Spacing / Space Before. */
@@ -67,6 +72,7 @@ const CHARACTER_EXTENSION_PATTERN = /\(([^)]*)\)/gu;
 const STRUCTURAL_MARKER = /^\/\*\s*OLUKOTAN:([a-z-]+)\s*\*\/$/i;
 const SCENE_ID_MARKER = /^\/\*\s*OLUKOTAN:SCENE-ID:([^*]+)\*\/$/i;
 const REVISION_MARKER = /^\/\*\s*OLUKOTAN:REV:([^*]+)\*\/$/i;
+const REVISION_RUNS_MARKER = /^\/\*\s*OLUKOTAN:REVRUNS:(\[.*\])\s*\*\/$/i;
 const FORMAT_MARKER = /^\/\*\s*OLUKOTAN:FMT:(\{[^*]*\})\s*\*\/$/i;
 const ANCHOR_MARKER = /^\/\*\s*OLUKOTAN:ID:([\w-]+)(?::BM:([\w-]+))?\s*\*\/$/i;
 
@@ -250,11 +256,13 @@ export function parseFountain(source: string): ScreenplayDocument {
   let pendingSceneId: string | undefined;
   let expectingDialogue = false;
   let pendingRevision: string | undefined;
+  let pendingRevisionRuns: [number, number, string][] | undefined;
   let pendingFormat: NonNullable<ScreenplayElement["metadata"]>["format"] | undefined;
   let pendingAnchor: { id: string; bookmark?: string } | undefined;
   let dualGroup: string | undefined;
   const push = (element: ScreenplayElement) => {
     if (pendingRevision) { element.metadata = { ...element.metadata, revisionSet: pendingRevision }; pendingRevision = undefined; }
+    if (pendingRevisionRuns) { element.metadata = { ...element.metadata, revisionRuns: pendingRevisionRuns }; pendingRevisionRuns = undefined; }
     if (pendingFormat) { element.metadata = { ...element.metadata, format: pendingFormat }; pendingFormat = undefined; }
     if (pendingAnchor) { element.id = pendingAnchor.id; element.metadata = { ...element.metadata, anchor: true, ...(pendingAnchor.bookmark ? { bookmark: pendingAnchor.bookmark } : {}) }; pendingAnchor = undefined; }
     if (dualGroup && ["character", "parenthetical", "dialogue"].includes(element.type)) element.metadata = { ...element.metadata, dualDialogueGroupId: dualGroup };
@@ -263,6 +271,14 @@ export function parseFountain(source: string): ScreenplayDocument {
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i]; const line = raw.trim();
     if (!line) { expectingDialogue = false; dualGroup = undefined; continue; }
+    const runsMarker = line.match(REVISION_RUNS_MARKER);
+    if (runsMarker) {
+      try {
+        const parsed = JSON.parse(runsMarker[1]) as unknown;
+        if (Array.isArray(parsed)) pendingRevisionRuns = parsed.filter((run): run is [number, number, string] => Array.isArray(run) && typeof run[0] === "number" && typeof run[1] === "number" && typeof run[2] === "string");
+      } catch { /* ignore a damaged marker */ }
+      continue;
+    }
     const revisionMarker = line.match(REVISION_MARKER);
     if (revisionMarker) { pendingRevision = revisionMarker[1].trim(); continue; }
     const anchorMarker = line.match(ANCHOR_MARKER);
@@ -311,7 +327,8 @@ export function parseFountain(source: string): ScreenplayDocument {
 }
 
 function fountainText(element: ScreenplayElement, dualSecond = false): string {
-  const revision = element.metadata?.revisionSet ? `/* OLUKOTAN:REV:${element.metadata.revisionSet} */\n` : "";
+  const revision = (element.metadata?.revisionSet ? `/* OLUKOTAN:REV:${element.metadata.revisionSet} */\n` : "")
+    + (element.metadata?.revisionRuns?.length ? `/* OLUKOTAN:REVRUNS:${JSON.stringify(element.metadata.revisionRuns).replace(/\*\//gu, "* /")} */\n` : "");
   const format = element.metadata?.format && Object.keys(element.metadata.format).length ? `/* OLUKOTAN:FMT:${JSON.stringify(element.metadata.format)} */\n` : "";
   const anchor = element.metadata?.anchor || element.metadata?.bookmark ? `/* OLUKOTAN:ID:${element.id}${element.metadata.bookmark ? `:BM:${element.metadata.bookmark}` : ""} */\n` : "";
   return anchor + revision + format + fountainBody(element, dualSecond);

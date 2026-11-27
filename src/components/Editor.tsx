@@ -2,7 +2,7 @@ import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } f
 import { wordCount } from "../lib/screenplay";
 import { elementSpecs, lockPages, paginate, relockFromPage, type LayoutLine } from "../lib/pagination";
 import { pageViewGroups } from "../lib/page-view";
-import { applyRevisionMarks, clearRevisionMarks, nextRevisionSet, revisionMarkFor, revisionSetById } from "../lib/revisions";
+import { reconcileRevisionRuns, applyRevisionMarks, clearRevisionMarks, nextRevisionSet, revisionMarkFor, revisionSetById } from "../lib/revisions";
 import { ReportsDialog } from "./ReportsDialog";
 import { TitlePageDialog } from "./TitlePageDialog";
 import { RichLine, type LineFragment, type RichLineHandle } from "./RichLine";
@@ -159,6 +159,8 @@ export function Editor(props: EditorProps) {
     if (record) { history.current.past.push(cloneDocument(document)); history.current.past = history.current.past.slice(-150); history.current.future = []; }
     const revisions = data.screenplaySettings.revisions;
     if (record && revisions.enabled && revisions.activeSetId && next.elements !== document.elements) next = { ...next, elements: applyRevisionMarks(document.elements, next.elements, revisions.activeSetId) };
+    // Run-level revision marks (from Final Draft) follow their text through every edit.
+    if (next.elements !== document.elements) next = { ...next, elements: reconcileRevisionRuns(document.elements, next.elements) };
     const prepared = synchroniseSceneMetadata(next, data);
     setDocument(prepared.document); setProjectData(prepared.projectData); onProjectDataChange(prepared.projectData);
     if (focus) { setActiveIndex(focus.index); focusRequest.current = focus; }

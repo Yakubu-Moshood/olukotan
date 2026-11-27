@@ -1,5 +1,6 @@
 import type { ProjectData, RevisionSet, SceneMetadata } from "../types";
 import { createElement, parseCharacter, type ScreenplayDocument, type ScreenplayElement, type ScreenplayElementType } from "./screenplay-elements";
+import { visibleText } from "./rich-text";
 import { serializeTitlePage, styledChars, titleCreditBlock, type TitlePageFields } from "./pagination";
 
 /**
@@ -44,12 +45,20 @@ function parseXml(xml: string): Document {
 
 const children = (node: Element, name: string) => [...node.children].filter((child) => child.nodeName === name);
 
-/** Converts <Text Style="Bold+Italic"> runs into Fountain emphasis markers. */
-function runsToFountain(paragraph: Element, revisionIds: Set<string>): string {
+/**
+ * Converts <Text Style="Bold+Italic"> runs into Fountain emphasis markers, and records which
+ * visible characters each run's RevisionID covers ([start, end, fdxRevisionId]).
+ */
+function runsToFountain(paragraph: Element, revisionIds: Set<string>): { text: string; revisions: [number, number, string][] } {
   let out = "";
+  let visible = 0;
+  const revisions: [number, number, string][] = [];
   for (const text of children(paragraph, "Text")) {
     let value = text.textContent ?? "";
     const revision = text.getAttribute("RevisionID"); if (revision) revisionIds.add(revision);
+    const length = [...value.replace(/\r?\n/gu, " ")].length;
+    if (length && revision && revision !== "0") revisions.push([visible, visible + length, revision]);
+    visible += length;
     const style = (text.getAttribute("Style") ?? "").split("+");
     if (style.includes("AllCaps")) value = value.toLocaleUpperCase("en-GB");
     if (!value) continue;
@@ -65,7 +74,7 @@ function runsToFountain(paragraph: Element, revisionIds: Set<string>): string {
     }
     out += lead + core + trail;
   }
-  return out.replace(/\r?\n/gu, " ").replace(/\t/gu, " ");
+  return { text: out.replace(/\r?\n/gu, " ").replace(/\t/gu, " "), revisions };
 }
 
 function revisionForParagraph(paragraph: Element): string | undefined {
@@ -105,10 +114,15 @@ export function parseFdx(xml: string): FdxImportResult {
     let type = TYPE_FROM_FDX[fdxType];
     if (!type) { type = "general"; unknownTypes[fdxType] = (unknownTypes[fdxType] ?? 0) + 1; }
     if (paragraph.getAttribute("StartsNewPage") === "Yes" && elements.length) elements.push(createElement("page-break"));
-    const text = runsToFountain(paragraph, fdxRevisionIds);
+    const { text, revisions } = runsToFountain(paragraph, fdxRevisionIds);
     const metadata: ScreenplayElement["metadata"] = {};
     const revision = revisionForParagraph(paragraph);
-    if (revision) metadata.revisionSet = `fdx-revision-${revision}`;
+    const total = visibleText(text).length;
+    const uniform = revisions.length === 1 && revisions[0][0] === 0 && revisions[0][1] >= total;
+    if (revisions.length && !uniform) {
+      // Marks on only part of the paragraph, or from several sets: keep them run by run.
+      metadata.revisionRuns = revisions.map(([start, end, id]) => [start, Math.min(end, total), `fdx-revision-${id}`]);
+    } else if (revision) metadata.revisionSet = `fdx-revision-${revision}`;
     if (dualGroup && (type === "character" || type === "parenthetical" || type === "dialogue")) metadata.dualDialogueGroupId = dualGroup;
     if (type === "scene-heading") {
       const id = sceneId(); metadata.sceneId = id;
@@ -226,16 +240,21 @@ function buildTemplate(xml: string): string {
 const escapeXml = (value: string) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
 /** Converts Fountain emphasis into <Text Style="…"> runs. */
-export function fountainToRuns(text: string, revisionId?: string): string {
+/**
+ * Writes Fountain text as FDX <Text> runs. `revisionAt` gives the FDX revision ID for each visible
+ * character (run-level marks); otherwise every run carries `revisionId`.
+ */
+export function fountainToRuns(text: string, revisionId?: string, revisionAt?: (offset: number) => string | undefined): string {
   const chars = styledChars(text);
   if (!chars.length) return `<Text${revisionId ? ` RevisionID="${revisionId}"` : ""}></Text>`;
-  const runs: { text: string; style: string }[] = [];
-  for (const c of chars) {
+  const runs: { text: string; style: string; revision?: string }[] = [];
+  chars.forEach((c, offset) => {
     const style = [c.bold ? "Bold" : "", c.italic ? "Italic" : "", c.underline ? "Underline" : ""].filter(Boolean).join("+");
+    const revision = revisionAt ? revisionAt(offset) : revisionId;
     const last = runs.at(-1);
-    if (last && last.style === style) last.text += c.ch; else runs.push({ text: c.ch, style });
-  }
-  return runs.map((run) => `<Text${run.style ? ` Style="${run.style}"` : ""}${revisionId ? ` RevisionID="${revisionId}"` : ""}>${escapeXml(run.text)}</Text>`).join("");
+    if (last && last.style === style && last.revision === revision) last.text += c.ch; else runs.push({ text: c.ch, style, revision });
+  });
+  return runs.map((run) => `<Text${run.style ? ` Style="${run.style}"` : ""}${run.revision ? ` RevisionID="${run.revision}"` : ""}>${escapeXml(run.text)}</Text>`).join("");
 }
 
 export interface FdxExportOptions { includeSceneNumbers: boolean; includeNotes: boolean; includeTitlePage: boolean; titlePage: TitlePageFields; template?: string }
@@ -254,7 +273,11 @@ export function writeFdx(document: ScreenplayDocument, projectData: ProjectData,
     startsNewPage = false;
     const properties = scene ? `<SceneProperties${scene.colour ? ` Color="${colourToFdx(scene.colour)}"` : ""}${scene.tags?.[0] ? ` Title="${escapeXml(scene.tags[0])}"` : ""}>${scene.summary ? `<Summary><Paragraph Type="Action"><Text>${escapeXml(scene.summary)}</Text></Paragraph></Summary>` : ""}</SceneProperties>` : "";
     const text = element.type === "scene-heading" && scene?.omitted ? "OMITTED" : element.text;
-    return `<Paragraph ${attributes}>${properties}${fountainToRuns(text, revision)}</Paragraph>`;
+    const runs = element.metadata?.revisionRuns;
+    const revisionAt = runs?.length && text === element.text
+      ? (offset: number) => { const run = runs.find(([start, end]) => offset >= start && offset < end); return run ? revisionIndex.get(run[2]) : undefined; }
+      : undefined;
+    return `<Paragraph ${attributes}>${properties}${fountainToRuns(text, revision, revisionAt)}</Paragraph>`;
   };
   const elements = document.elements;
   for (let i = 0; i < elements.length; i++) {
